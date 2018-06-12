@@ -104,4 +104,18 @@ venv.bak/
 .mypy_cache/
 
 # Folders
-**
+External datasets/
+Wrong train images/
+stage1_final_test/
+stage1_test/
+stage1_train/
+saves/
+logs/
+Saved Weights/
+
+# Checkpoints
+*.meta
+*.index
+*.csv
+*.data*
+*.ipynb

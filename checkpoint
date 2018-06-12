@@ -1,0 +1,2 @@
+model_checkpoint_path: "/media/data/Kaggle/Kaggle-2018-Data-Science-Bowl/unet_vanilla_256_wdice"
+all_model_checkpoint_paths: "/media/data/Kaggle/Kaggle-2018-Data-Science-Bowl/unet_vanilla_256_wdice"
