@@ -194,8 +194,51 @@ def load_test_data(test_df, image_size=(256, 256)):
     return x_test
 
 
+def load_images(paths, color_mode=cv2.IMREAD_COLOR,
+                tgt_size=None, method='resize'):
+    '''Wrapper for read_image multiple times'''
+    ret = []
+
+    for path in paths:
+        if method == 'resize':
+            ret.append(read_image(path,
+                                  color_mode=color_mode,
+                                  target_size=tgt_size,
+                                  method=method))
+        elif method == 'crop':
+            ret.extend(read_image(path,
+                                  color_mode=color_mode,
+                                  target_size=tgt_size,
+                                  method=method))
+
+    ret = np.array(ret)
+    if len(ret.shape) == 3:
+        ret = np.expand_dims(ret, axis=-1)
+    return normalize(ret, type_=0)
+
+
+def load_masks(paths, tgt_size=None, method='resize'):
+    '''Wrapper for read_image multiple times'''
+    ret = []
+
+    for path in paths:
+        if method == 'resize':
+            ret.append(read_mask(path,
+                                 target_size=tgt_size,
+                                 method=method))
+        elif method == 'crop':
+            ret.extend(read_mask(path,
+                                 target_size=tgt_size,
+                                 method=method))
+
+    ret = np.array(ret)
+    if len(ret.shape) == 3:
+        ret = np.expand_dims(ret, axis=-1)
+    return normalize(ret, type_=0)
+
 # Collection of methods for basic data manipulation like normalizing,
 # inverting, color transformation and generating new images/masks
+
 
 def normalize_imgs(data):
     """Normalize images."""
@@ -263,11 +306,12 @@ def generate_images(imgs, seed=None):
     return imgs[0]
 
 
-def generate_images_and_masks(imgs, masks, weights):
+def generate_images_and_masks(imgs, masks, weights=None):
     """Generate new images and masks."""
     seed = np.random.randint(10000)
     imgs = generate_images(imgs, seed=seed)
-    weights = generate_images(weights, seed=seed)
+    if weights is not None:
+        weights = generate_images(weights, seed=seed)
     masks = trsf_proba_to_binary(generate_images(masks, seed=seed))
     return imgs, masks, weights
 

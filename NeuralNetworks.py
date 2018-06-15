@@ -436,6 +436,8 @@ class U_Net(ConvNetwork_ABC):
         super().__init__(*args, **kwargs)
         self.loss = loss
         self.net_type = net_type
+        self.buffer_x = []
+        self.buffer_y = []
 
     def build_graph(self):
         """ Build the complete graph in TensorFlow. """
@@ -630,7 +632,7 @@ class U_Net(ConvNetwork_ABC):
                                     name='cls_weights')
         return cls_weights
 
-    def next_mini_batch(self):
+    def next_mini_batch(self, method, tgt_size):
         """Get the next mini batch."""
         start = self.index_in_epoch
         self.index_in_epoch += self.mb_size
@@ -644,22 +646,44 @@ class U_Net(ConvNetwork_ABC):
         if self.index_in_epoch > len(self.x_train):
             self.index_in_epoch = 0
             self.epoch -= self.mb_size / len(self.x_train)
-            return self.next_mini_batch()  # Recursive use of function.
+            # Recursive use of function.
+            return self.next_mini_batch(method, tgt_size)
 
         end = self.index_in_epoch
 
-        # Original data.
-        x_tr = self.x_train[self.perm_array[start:end]]
-        y_tr = self.y_train[self.perm_array[start:end]]
-        y_wg = self.w_train[self.perm_array[start:end]]
+        if method == 'crop' and len(self.buffer_x) > self.mb_size:
+            self.epoch -= self.mb_size / len(self.x_train)
+            rand = np.arange(len(self.buffer_x))
+            np.random.shuffle(rand)
+            print(self.buffer_x)
+            x = np.array([self.buffer_x.pop(i) for i in rand])
+            y = np.array([self.buffer_y.pop(i) for i in rand])
+            print(self.buffer_x)
+            return x, y, None
 
+        # Original data.
+        x_tr = utils.load_images(self.x_train[self.perm_array[start:end]],
+                                 method=method, tgt_size=tgt_size)
+        y_tr = utils.load_masks(self.y_train[self.perm_array[start:end]],
+                                method=method, tgt_size=tgt_size)
         # Use augmented data.
         if self.train_on_augmented_data:
-            x_tr, y_tr, y_wg = utils.generate_images_and_masks(
-                x_tr, y_tr, y_wg)
+            x_tr, y_tr, y_wgt = utils.generate_images_and_masks(
+                x_tr, y_tr)
             y_tr = utils.trsf_proba_to_binary(y_tr)
 
-        return x_tr, y_tr, y_wg
+        if method == 'crop':
+            self.buffer_x.extend(x_tr)
+            self.buffer_y.extend(y_tr)
+            rand = np.arange(len(self.buffer_x))
+            np.random.shuffle(rand)
+            print(self.buffer_x)
+            x = np.array([self.buffer_x.pop(i) for i in rand])
+            y = np.array([self.buffer_y.pop(i) for i in rand])
+            print(self.buffer_x)
+            return x, y, None
+
+        return x_tr, y_tr, None
 
     def get_score(self, pred, y):
         '''Reimplement this function and return the score'''
@@ -695,6 +719,7 @@ class U_Net(ConvNetwork_ABC):
                     x_train, y_train,
                     x_valid, y_valid,
                     w_train=None, w_valid=None,
+                    method='resize',
                     n_epoch=1, train_on_augmented_data=False,
                     train_profille='all', lr=None):
         """ Train the graph of the corresponding neural network. """
@@ -724,6 +749,7 @@ class U_Net(ConvNetwork_ABC):
         self.perm_array = np.arange(len(self.x_train))
         self.train_on_augmented_data = train_on_augmented_data
         mb_per_epoch = self.x_train.shape[0] / self.mb_size
+        tgt_size = self.input_shape[:2]
 
         # Start timer.
         start = datetime.datetime.now()
@@ -754,11 +780,12 @@ class U_Net(ConvNetwork_ABC):
                     self.learn_rate, datetime.datetime.now() - start))
 
             # Train the graph.
-            x_batch, y_batch, w_batch = self.next_mini_batch()  # next mini batch
+            x_batch, y_batch, w_batch = self.next_mini_batch(
+                method, tgt_size)  # next mini batch
             sess.run([train_step, self.extra_update_ops_tf],
                      feed_dict={self.x_tf: x_batch,
                                 self.y_tf: y_batch,
-                                self.w_tf: w_batch,
+                                # self.w_tf: w_batch,
                                 self.keep_prob_tf: self.keep_prob,
                                 self.learn_rate_tf: self.learn_rate,
                                 tf.keras.backend.learning_phase(): 1,  # Required if using tf.keras
@@ -776,13 +803,15 @@ class U_Net(ConvNetwork_ABC):
                     ids = np.arange(len(dct['x']))
                     np.random.shuffle(ids)
                     ids = ids[:len(val_dct['x'])]  # len(x_batch)
-                    x = dct['x'][ids]
-                    y = dct['y'][ids]
-                    w = dct['w'][ids]
+                    x = utils.load_images(dct['x'][ids],
+                                          method='resize', tgt_size=tgt_size)
+                    y = utils.load_masks(dct['y'][ids],
+                                         method='resize', tgt_size=tgt_size)
+                    # w = dct['w'][ids]
 
                     dct['feed_dict'] = {self.x_tf: x,
                                         self.y_tf: y,
-                                        self.w_tf: w,
+                                        # self.w_tf: w,
                                         self.keep_prob_tf: 1.0}
 
                     # Evaluate current loss and score

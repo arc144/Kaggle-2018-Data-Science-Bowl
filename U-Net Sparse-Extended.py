@@ -22,7 +22,7 @@ NET_TYPE = 'Xception_InceptionSE'  # Network to use
 nn_name = 'unet_xception_256crops_wdice+bce'
 PRETRAIN_WEIGHTS = False
 USE_WEIGHTS = False    # For weighted bce
-DATA_METHOD = 'resize'   # Either crop or resize
+DATA_METHOD = 'crop'   # Either crop or resize
 
 # %%####################### DIRS #########################
 TRAIN_DIR = os.path.join(os.getcwd(), 'stage1_train')
@@ -81,23 +81,9 @@ df = pd.DataFrame([[x]
 df[0].value_counts()
 
 
-# Read images/masks from files and resize them. Each image and mask
-# is stored as a 3-dim array where the number of channels is 3 and 1,
-# respectively.
-x_train, y_train, y_weights = utils.load_raw_data(
-    train_df, image_size=(IMG_WIDTH, IMG_HEIGHT), method=DATA_METHOD)
+# Get rerefence for image and mask paths
+x_train, y_train = train_df['image_path'].values, train_df['mask_dir'].values
 
-
-# x_test = utils.load_test_data(test_df, image_size=(IMG_WIDTH, IMG_HEIGHT))
-
-
-# Normalize all images and masks. There is the possibility to transform images
-# into the grayscale sepctrum and to invert images which have a very
-# light background.
-x_train, y_train, y_weights = utils.preprocess_raw_data(
-    x_train, y_train, y_weights, invert=True)
-
-# x_test = utils.preprocess_test_data(x_test, invert=True)
 
 # %%#####################################################################
 # ############################# TRAINING ################################
@@ -114,11 +100,9 @@ for i, (train_index, valid_index) in enumerate(kfold.split(x_train)):
     # Split into train and validation
     x_trn = x_train[train_index]
     y_trn = y_train[train_index]
-    w_trn = y_weights[train_index]
 
     x_vld = x_train[valid_index]
     y_vld = y_train[valid_index]
-    w_vld = y_weights[valid_index]
 
     # Choose a certain fold.
     if i == 0:
@@ -136,7 +120,8 @@ for i, (train_index, valid_index) in enumerate(kfold.split(x_train)):
                           use_bn=USE_BN, use_drop=USE_DROP,
                           use_weights=USE_WEIGHTS,
                           net_type=NET_TYPE,
-                          dir_dict=DIR_DICT)
+                          dir_dict=DIR_DICT,
+                          )
             u_net.build_graph()  # Build graph.
 
             # Start tensorflow session.
@@ -149,27 +134,31 @@ for i, (train_index, valid_index) in enumerate(kfold.split(x_train)):
 
 #                # Training on original data.
                 u_net.train_graph(sess,
-                                  x_train=x_trn, y_train=y_trn, w_train=w_trn,
-                                  x_valid=x_vld, y_valid=y_vld, w_valid=w_vld,
+                                  x_train=x_trn, y_train=y_trn,
+                                  x_valid=x_vld, y_valid=y_vld,
                                   n_epoch=1.,
                                   train_profille='top',
+                                  method=DATA_METHOD,
                                   )
                # Training on augmented data.
                 u_net.train_graph(sess,
-                                  x_train=x_trn, y_train=y_trn, w_train=w_trn,
-                                  x_valid=x_vld, y_valid=y_vld, w_valid=w_vld,
+                                  x_train=x_trn, y_train=y_trn,
+                                  x_valid=x_vld, y_valid=y_vld,
                                   n_epoch=20,
                                   train_on_augmented_data=True,
                                   train_profille='top',
+                                  method=DATA_METHOD,
                                   )
 #                u_net.learn_rate_alpha = 0.15
                 u_net.train_graph(sess,
-                                  x_train=x_trn, y_train=y_trn, w_train=w_trn,
-                                  x_valid=x_vld, y_valid=y_vld, w_valid=w_vld,
+                                  x_train=x_trn, y_train=y_trn,
+                                  x_valid=x_vld, y_valid=y_vld,
                                   n_epoch=N_EPOCH,
                                   train_on_augmented_data=True,
-                                  #                                   lr = 0.0001,
-                                  train_profille='all')
+                                      #                                   lr = 0.0001,
+                                  train_profille='all',
+                                  method=DATA_METHOD,
+                                  )
 
                 # Save parameters, tensors, summaries.
                 u_net.save_model(sess)
@@ -185,8 +174,8 @@ for i, (train_index, valid_index) in enumerate(kfold.split(x_train)):
 
             # Training on augmented data.
             u_net.train_graph(sess,
-                              x_train=x_trn, y_train=y_trn, w_train=w_trn,
-                              x_valid=x_vld, y_valid=y_vld, w_valid=w_vld,
+                              x_train=x_trn, y_train=y_trn,
+                              x_valid=x_vld, y_valid=y_vld,
                               n_epoch=N_EPOCH,
                               train_on_augmented_data=True)
             u_net.save_model(sess)  # Save parameters, tensors, summaries.
