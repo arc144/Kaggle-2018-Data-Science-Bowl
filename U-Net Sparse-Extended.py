@@ -54,7 +54,7 @@ USE_DROP = False
 KEEP_PROB = 0.8
 ACTIVATION = 'selu'
 PADDING = 'SYMMETRIC'
-LOSS = 'ce+wdice'
+LOSS = 'wdice+ce+entropy_penalty'
 
 # %%############ LOADING DATASETS #############################
 # Display working/train/test directories.
@@ -159,15 +159,15 @@ for i, (train_index, valid_index) in enumerate(kfold.split(x_train)):
                                   x_train=x_trn, y_train=y_trn, w_train=w_trn,
                                   x_valid=x_vld, y_valid=y_vld, w_valid=w_vld,
                                   n_epoch=20,
-                                  train_on_augmented_data=True,
+                                  train_on_augmented_data=False,
                                   train_profille='top',
                                   )
-#                u_net.learn_rate_alpha = 0.15
+                #                u_net.learn_rate_alpha = 0.15
                 u_net.train_graph(sess,
                                   x_train=x_trn, y_train=y_trn, w_train=w_trn,
                                   x_valid=x_vld, y_valid=y_vld, w_valid=w_vld,
                                   n_epoch=N_EPOCH,
-                                  train_on_augmented_data=True,
+                                  train_on_augmented_data=False,
                                   #                                   lr = 0.0001,
                                   train_profille='all')
 
