@@ -616,13 +616,14 @@ class U_Net(ConvNetwork_ABC):
             loss1 = tf.reduce_mean(beta * entropy)
 
             # Soft dice loss
+            logits_tf = tf.expand_dims(self.logits_tf[:, :, :, 1], axis=-1)
             axis = [1, 2]
             total = self.output_shape[0] * self.output_shape[1]
-            w = tf.reduce_sum(onehot_labels, axis=axis) / total
-            I = tf.reduce_sum(onehot_labels * self.logits_tf, axis=axis)
+            w = tf.reduce_sum(self.y_tf, axis=axis) / total
+            I = tf.reduce_sum(self.y_tf * logits_tf, axis=axis)
             balanced_I = I * (1 - w + epilson)
-            l2_pred = tf.reduce_sum(tf.square(self.logits_tf), axis=axis)
-            l2_true = tf.reduce_sum(tf.square(onehot_labels), axis=axis)
+            l2_pred = tf.reduce_sum(tf.square(logits_tf), axis=axis)
+            l2_true = tf.reduce_sum(tf.square(self.y_tf), axis=axis)
             dice_coeff = (2. * balanced_I + epilson) / \
                 (l2_true + l2_pred + epilson)
             loss2 = tf.subtract(1., tf.reduce_mean(dice_coeff))
@@ -690,8 +691,8 @@ class U_Net(ConvNetwork_ABC):
 
     def get_score(self, pred, y):
         '''Reimplement this function and return the score'''
-        for i in range(len(pred)):
-            pred[i] = pred[i] / pred[i].max()
+        # for i in range(len(pred)):
+        #     pred[i] = pred[i] / pred[i].max()
         pred = utils.trsf_proba_to_binary(pred)
         return score.get_score(y, pred)
 
