@@ -20,15 +20,14 @@ IMG_HEIGHT = 256       # Default image height
 IMG_CHANNELS = 3       # Default number of channels
 NET_TYPE = 'Xception_InceptionSE'  # Network to use
 nn_name = 'unet_xception_256crops_wdice+bce'
-PRETRAIN_WEIGHTS = False
 USE_WEIGHTS = False    # For weighted bce
-DATA_METHOD = 'crop'   # Either crop or resize
+DATA_METHOD = 'random_crop'   # Either crop or resize
 
 # %%####################### DIRS #########################
 TRAIN_DIR = os.path.join(os.getcwd(), 'stage1_train')
 TEST_DIR = os.path.join(os.getcwd(), 'stage1_final_test')
-#TRAIN_DIR = os.path.join(os.getcwd(), 'External datasets/external_data/train')
-#TEST_DIR = os.path.join(os.getcwd(), 'External datasets/external_data/test')
+# TRAIN_DIR = os.path.join(os.getcwd(), 'External datasets/external_data/train')
+# TEST_DIR = os.path.join(os.getcwd(), 'External datasets/external_data/test')
 IMG_TYPE = '.png'         # Image type
 DIR_DICT = dict(logs='logs', saves='saves')
 IMG_DIR_NAME = 'images'   # Folder name including the image
@@ -47,7 +46,7 @@ y_test_pred = {}
 LEARN_RATE_0 = 0.01
 LEARN_RATE_ALPHA = 0.25
 LEARN_RATE_STEP = 3
-N_EPOCH = 100
+N_EPOCH = 200
 MB_SIZE = 10
 USE_BN = False
 USE_DROP = False
@@ -88,6 +87,7 @@ x_train, y_train = train_df['image_path'].values, train_df['mask_dir'].values
 # %%#####################################################################
 # ############################# TRAINING ################################
 # #######################################################################
+PRETRAIN_WEIGHTS = False
 # Implement cross validations
 cv_num = 10
 kfold = sklearn.model_selection.KFold(
@@ -138,40 +138,34 @@ for i, (train_index, valid_index) in enumerate(kfold.split(x_train)):
                                   x_valid=x_vld, y_valid=y_vld,
                                   n_epoch=1.,
                                   train_profille='top',
-                                  method=DATA_METHOD,
+                                  method='resize',
                                   )
                # Training on augmented data.
                 u_net.train_graph(sess,
                                   x_train=x_trn, y_train=y_trn,
                                   x_valid=x_vld, y_valid=y_vld,
                                   n_epoch=20,
-                                  train_on_augmented_data=False,
+                                  train_on_augmented_data=True,
                                   train_profille='top',
-                                  method=DATA_METHOD,
+                                  method='resize',
                                   )
                 #                u_net.learn_rate_alpha = 0.15
                 u_net.train_graph(sess,
                                   x_train=x_trn, y_train=y_trn,
                                   x_valid=x_vld, y_valid=y_vld,
                                   n_epoch=N_EPOCH,
-<<<<<<< HEAD
                                   train_on_augmented_data=True,
-                                      #                                   lr = 0.0001,
+                                  # lr = 0.0001,
                                   train_profille='all',
-                                  method=DATA_METHOD,
+                                  method='resize',
                                   )
-=======
-                                  train_on_augmented_data=False,
-                                  #                                   lr = 0.0001,
-                                  train_profille='all')
->>>>>>> master
 
                 # Save parameters, tensors, summaries.
                 u_net.save_model(sess)
 
         # Continue training of a pretrained model.
         else:
-            u_net = U_Net()
+            u_net = U_Net(dir_dict=DIR_DICT)
             sess = u_net.load_session_from_file(nn_name,
                                                 update_cost=True,
                                                 renew_LR=False)
@@ -183,7 +177,10 @@ for i, (train_index, valid_index) in enumerate(kfold.split(x_train)):
                               x_train=x_trn, y_train=y_trn,
                               x_valid=x_vld, y_valid=y_vld,
                               n_epoch=N_EPOCH,
-                              train_on_augmented_data=True)
+                              train_on_augmented_data=True,
+                              train_profille='all',
+                              method='random_crop',         
+                              )
             u_net.save_model(sess)  # Save parameters, tensors, summaries.
 
 print('Total running time: ', datetime.datetime.now() - start)

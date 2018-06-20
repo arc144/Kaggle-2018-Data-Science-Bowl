@@ -679,37 +679,17 @@ class U_Net(ConvNetwork_ABC):
 
         end = self.index_in_epoch
 
-        if method == 'crop' and len(self.buffer_x) > self.mb_size:
-            self.epoch -= self.mb_size / len(self.x_train)
-            rand = np.arange(len(self.buffer_x))
-            np.random.shuffle(rand)
-            print(self.buffer_x)
-            x = np.array([self.buffer_x.pop(i) for i in rand])
-            y = np.array([self.buffer_y.pop(i) for i in rand])
-            print(self.buffer_x)
-            return x, y, None
-
         # Original data.
-        x_tr = utils.load_images(self.x_train[self.perm_array[start:end]],
-                                 method=method, tgt_size=tgt_size)
-        y_tr = utils.load_masks(self.y_train[self.perm_array[start:end]],
-                                method=method, tgt_size=tgt_size)
+
+        x_tr, y_tr = utils.load_images_masks(
+            self.x_train[self.perm_array[start:end]],
+            self.y_train[self.perm_array[start:end]],
+            method=method, tgt_size=tgt_size)
+
         # Use augmented data.
         if self.train_on_augmented_data:
-            x_tr, y_tr, y_wgt = utils.generate_images_and_masks(
-                x_tr, y_tr)
+            x_tr, y_tr = utils.augment_images_masks(x_tr, y_tr)
             y_tr = utils.trsf_proba_to_binary(y_tr)
-
-        if method == 'crop':
-            self.buffer_x.extend(x_tr)
-            self.buffer_y.extend(y_tr)
-            rand = np.arange(len(self.buffer_x))
-            np.random.shuffle(rand)
-            print(self.buffer_x)
-            x = np.array([self.buffer_x.pop(i) for i in rand])
-            y = np.array([self.buffer_y.pop(i) for i in rand])
-            print(self.buffer_x)
-            return x, y, None
 
         return x_tr, y_tr, None
 

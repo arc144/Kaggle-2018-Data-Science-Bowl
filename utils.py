@@ -6,6 +6,7 @@ import pandas as pd
 import sys
 import tqdm
 import keras.preprocessing.image
+from data_augmentation import random_transform
 
 # Collection of methods for data operations. Implemented are functions to read
 # images/masks from files and to read basic properties of the train/test
@@ -13,7 +14,7 @@ import keras.preprocessing.image
 
 
 def read_image(filepath, color_mode=cv2.IMREAD_COLOR,
-               target_size=None, method='resize'):
+               target_size=None, method='resize', seed=None):
     """Read an image from a file and resize it."""
     img = cv2.imread(filepath, color_mode)
     if target_size:
@@ -21,10 +22,15 @@ def read_image(filepath, color_mode=cv2.IMREAD_COLOR,
             img = cv2.resize(img, target_size, interpolation=cv2.INTER_AREA)
         elif method == 'crop':
             img = patchfy(img, crop_size=target_size)
+        elif method == 'random_crop':
+            img, seed = random_crop(
+                img, crop_size=target_size, seed=seed, return_seed=True)
+            return img, seed
+
     return img
 
 
-def read_mask(directory, target_size=None, method='resize'):
+def read_mask(directory, target_size=None, method='resize', seed=None):
     """Read and resize masks contained in a given directory."""
     for i, filename in enumerate(next(os.walk(directory))[2]):
         mask_path = os.path.join(directory, filename)
@@ -40,6 +46,8 @@ def read_mask(directory, target_size=None, method='resize'):
             mask = cv2.resize(mask, target_size, interpolation=cv2.INTER_AREA)
         elif method == 'crop':
             mask = patchfy(mask, crop_size=target_size)
+        elif method == 'random_crop':
+            mask = random_crop(mask, crop_size=target_size, seed=seed)
     return mask
 
 
@@ -194,40 +202,77 @@ def load_test_data(test_df, image_size=(256, 256)):
     return x_test
 
 
+def load_images_masks(x_paths, y_paths, color_mode=cv2.IMREAD_COLOR,
+                      tgt_size=None, method='resize', seeds=None):
+    '''Wrapper for load_images and load_masks'''
+    if method == 'random_crop':
+        imgs, seeds = load_images(x_paths, color_mode=color_mode,
+                                  method=method, tgt_size=tgt_size)
+    else:
+        imgs = load_images(x_paths, color_mode=color_mode,
+                           method=method, tgt_size=tgt_size)
+
+    masks = load_masks(y_paths,
+                       method=method, tgt_size=tgt_size,
+                       seeds=seeds)
+    return imgs, masks
+
+
 def load_images(paths, color_mode=cv2.IMREAD_COLOR,
-                tgt_size=None, method='resize'):
+                tgt_size=None, method='resize', seed=None):
     '''Wrapper for read_image multiple times'''
     ret = []
-
+    seeds = []
     for path in paths:
-        if method == 'resize':
-            ret.append(read_image(path,
-                                  color_mode=color_mode,
-                                  target_size=tgt_size,
-                                  method=method))
-        elif method == 'crop':
+        if method == 'crop':
             ret.extend(read_image(path,
                                   color_mode=color_mode,
                                   target_size=tgt_size,
-                                  method=method))
+                                  method=method,
+                                  seed=seed))
+        elif method == 'random_crop':
+            im, seed = read_image(path,
+                                  color_mode=color_mode,
+                                  target_size=tgt_size,
+                                  method=method,
+                                  seed=seed)
+            ret.append(im)
+            seeds.append(seed)
+        else:
+            ret.append(read_image(path,
+                                  color_mode=color_mode,
+                                  target_size=tgt_size,
+                                  method=method,
+                                  seed=seed))
 
     ret = np.array(ret)
     if len(ret.shape) == 3:
         ret = np.expand_dims(ret, axis=-1)
-    return normalize(ret, type_=0)
+
+    ret = normalize(ret, type_=0)
+
+    if method == 'random_crop':
+        return ret, seeds
+    else:
+        return ret
 
 
-def load_masks(paths, tgt_size=None, method='resize'):
+def load_masks(paths, tgt_size=None, method='resize', seeds=None):
     '''Wrapper for read_image multiple times'''
     ret = []
 
-    for path in paths:
-        if method == 'resize':
-            ret.append(read_mask(path,
+    for i, path in enumerate(paths):
+        if method == 'crop':
+            ret.extend(read_mask(path,
                                  target_size=tgt_size,
                                  method=method))
-        elif method == 'crop':
-            ret.extend(read_mask(path,
+        if method == 'random_crop':
+            ret.append(read_mask(path,
+                                 target_size=tgt_size,
+                                 method=method,
+                                 seed=seeds[i]))
+        else:
+            ret.append(read_mask(path,
                                  target_size=tgt_size,
                                  method=method))
 
@@ -410,3 +455,63 @@ def patchfy(im, crop_size=(256, 256)):
                    start_w:end_w,
                     :]
     return patches
+
+
+def random_crop(im, crop_size=(256, 256), seed=None, return_seed=False, threshold=0.33):
+    '''Randomly crop a image'''
+    height, width = im.shape[0:2]
+    if not seed:
+        x = np.random.random_integers(0, height - crop_size[0])
+        y = np.random.random_integers(0, width - crop_size[1])
+    else:
+        x, y = seed
+    if len(im.shape) < 3:
+        ret = im[x:x + crop_size[0], y:y + crop_size[1]]
+    elif len(im.shape) == 3:
+        ret = im[x:x + crop_size[0], y:y + crop_size[1], :]
+
+    # Check unbalancing
+    # if np.sum(ret) / (crop_size[0] * crop_size[1]) < threshold:
+    #     return random_crop(im, crop_size=crop_size, seed=seed,
+    #                        return_seed=return_seed, threshold=threshold)
+
+    if return_seed:
+        return ret, seed
+    return ret
+
+
+def augment_images_masks(imgs, masks):
+    '''Augment images and masks, expects 4d arrays'''
+    ret_imgs = []
+    ret_masks = []
+    for x, y in zip(imgs, masks):
+        seed = np.random.randint(10000)
+        ret_imgs.append(
+            random_transform(x, row_axis=0, col_axis=1, channel_axis=2,
+                             rotation_range=360,
+                             width_shift_range=0.,
+                             height_shift_range=0.,
+                             shear_range=0.7,
+                             zoom_range=0.3,
+                             channel_shift_range=0.5,
+                             fill_mode='nearest',
+                             cval=0.,
+                             horizontal_flip=True,
+                             vertical_flip=True,
+                             channel_shuffle=True,
+                             seed=seed))
+        ret_masks.append(
+            random_transform(y, row_axis=0, col_axis=1, channel_axis=2,
+                             rotation_range=360,
+                             width_shift_range=0.,
+                             height_shift_range=0.,
+                             shear_range=0.7,
+                             zoom_range=0.3,
+                             channel_shift_range=0.,
+                             fill_mode='nearest',
+                             cval=0.,
+                             horizontal_flip=True,
+                             vertical_flip=True,
+                             channel_shuffle=False,
+                             seed=seed))
+    return np.array(ret_imgs), np.array(ret_masks)
