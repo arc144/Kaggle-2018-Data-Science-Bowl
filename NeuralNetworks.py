@@ -448,8 +448,8 @@ class U_Net(ConvNetwork_ABC):
         with self.graph.as_default():
 
             # Input tensor.
-            shape = [None]
-            shape.extend(self.input_shape)
+            shape = [None, None, None, self.input_shape[-1]]
+            # shape.extend(self.input_shape)
             self.x_tf = tf.placeholder(dtype=tf.float32, shape=shape,
                                        name='x_tf')  # (.,128,128,3)
 
@@ -467,8 +467,8 @@ class U_Net(ConvNetwork_ABC):
             self.logits_tf = tf.identity(self.create_graph(), name='logits_tf')
 
             # Target tensor.
-            shape = [None]
-            shape.extend(self.output_shape)
+            shape = [None, None, None, self.output_shape[-1]]
+            # shape.extend(self.output_shape)
             self.y_tf = tf.placeholder(dtype=tf.float32, shape=shape,
                                        name='y_tf')  # (.,128,128,1)
 
@@ -632,6 +632,16 @@ class U_Net(ConvNetwork_ABC):
 
             loss = loss0 + loss1 + loss2
 
+        elif self.loss == 'focal':
+            gamma = 2
+            epilson = 1e-5
+            prob = tf.nn.softmax(self.logits_tf)
+            probt = prob * self.y_tf + (1 - prob) * (1 - self.y_tf)
+
+            ce = -tf.log(probt)
+            loss = tf.pow((1 - probt), gamma) * ce
+            loss = tf.reduce_mean(loss)
+
         return loss
 
     def optimizer_tensor(self):
@@ -693,10 +703,12 @@ class U_Net(ConvNetwork_ABC):
 
         return x_tr, y_tr, None
 
-    def get_score(self, pred, y):
+    def get_score(self, pred, y, from_paths=False, tgt_size=None, method=None):
         '''Reimplement this function and return the score'''
         # for i in range(len(pred)):
         #     pred[i] = pred[i] / pred[i].max()
+        if from_paths:
+            y = utils.load_masks(y, tgt_size=tgt_size, method=method)
         pred = utils.trsf_proba_to_binary(pred)
         return score.get_score(y, pred)
 
@@ -704,17 +716,38 @@ class U_Net(ConvNetwork_ABC):
         for i in range(len(pred)):
             pred[i] = pred[i] / pred[i].max()
         pred = utils.trsf_proba_to_binary(pred)
-        y = np.squeeze(y)
+        if len(pred.shape) == 3:
+            y = np.squeeze(y)
 
         intersection = np.sum(pred * y)
         union = np.sum(np.maximum(pred, y))
         return intersection / union
 
-    def get_prediction(self, sess, x_data, keep_prob=1.0):
+    def get_prediction(self, sess, x_data, from_paths=False,
+                       tgt_size=None, method=None,
+                       keep_prob=1.0):
         """ Prediction of the neural network graph. """
-        pred = sess.run(tf.nn.softmax(self.logits_tf),
-                        feed_dict={self.x_tf: x_data,
-                                   self.keep_prob_tf: keep_prob})
+        # Load images if needed
+        if from_paths:
+            x_data = utils.load_images(
+                x_data, tgt_size=tgt_size, method=method)
+
+        # Do it one by one if different sizes
+        if from_paths and method is None:
+            pred = []
+            for x in x_data:
+                print(x.shape)
+                pred.append(
+                    sess.run(tf.nn.softmax(self.logits_tf),
+                             feed_dict={self.x_tf: np.expand_dims(x, axis=0),
+                                        self.keep_prob_tf: keep_prob}))
+            pred = np.array(pred)
+
+        # Do it for all the batch
+        else:
+            pred = sess.run(tf.nn.softmax(self.logits_tf),
+                            feed_dict={self.x_tf: x_data,
+                                       self.keep_prob_tf: keep_prob})
         if pred.shape[-1] == 2:
             pred = pred[:, :, :, 1]
 

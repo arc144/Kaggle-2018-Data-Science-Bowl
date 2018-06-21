@@ -46,7 +46,7 @@ y_test_pred = {}
 LEARN_RATE_0 = 0.01
 LEARN_RATE_ALPHA = 0.25
 LEARN_RATE_STEP = 3
-N_EPOCH = 200
+N_EPOCH = 20
 MB_SIZE = 10
 USE_BN = False
 USE_DROP = False
@@ -82,6 +82,7 @@ df[0].value_counts()
 
 # Get rerefence for image and mask paths
 x_train, y_train = train_df['image_path'].values, train_df['mask_dir'].values
+x_test = test_df['image_path'].values
 
 
 # %%#####################################################################
@@ -144,7 +145,7 @@ for i, (train_index, valid_index) in enumerate(kfold.split(x_train)):
                 u_net.train_graph(sess,
                                   x_train=x_trn, y_train=y_trn,
                                   x_valid=x_vld, y_valid=y_vld,
-                                  n_epoch=20,
+                                  n_epoch=15,
                                   train_on_augmented_data=True,
                                   train_profille='top',
                                   method='resize',
@@ -179,7 +180,7 @@ for i, (train_index, valid_index) in enumerate(kfold.split(x_train)):
                               n_epoch=N_EPOCH,
                               train_on_augmented_data=True,
                               train_profille='all',
-                              method='random_crop',         
+                              method='random_crop',
                               )
             u_net.save_model(sess)  # Save parameters, tensors, summaries.
 
@@ -232,25 +233,30 @@ for i, (train_index, valid_index) in enumerate(kfold.split(x_train)):
     # Split into train and validation
     x_trn = x_train[train_index]
     y_trn = y_train[train_index]
-    w_trn = y_weights[train_index]
+#    w_trn = y_weights[train_index]
 
     x_vld = x_train[valid_index]
     y_vld = y_train[valid_index]
-    w_vld = y_weights[valid_index]
+#    w_vld = y_weights[valid_index]
 
 # %%Summary of scores for training and validations sets. Note that the score is
 # better than the true score, since overlapping/touching nuclei can not be
 # separately identified in this version.
 u_net = U_Net(dir_dict=DIR_DICT)
 sess = u_net.load_session_from_file(nn_name)
+METHOD = 'resize'
 
 # Overall score on validation set.
-y_valid_pred_proba = u_net.get_prediction(sess, x_vld)
-for i in range(len(y_valid_pred_proba)):
-    y_valid_pred_proba[i] = y_valid_pred_proba[i] / y_valid_pred_proba[i].max()
+y_valid_pred_proba = u_net.get_prediction(
+    sess, x_vld, from_paths=True, method=METHOD, tgt_size=(IMG_HEIGHT, IMG_WIDTH))
+# for i in range(len(y_valid_pred_proba)):
+# y_valid_pred_proba[i] = y_valid_pred_proba[i] /
+# y_valid_pred_proba[i].max()
 y_valid_pred = utils.trsf_proba_to_binary(
     y_valid_pred_proba, threshold=0.5)
-valid_score = u_net.get_score(y_valid_pred_proba, y_vld)
+valid_score = u_net.get_score(
+    y_valid_pred_proba, y_vld, from_paths=True,
+    method=METHOD, tgt_size=(IMG_HEIGHT, IMG_WIDTH))
 tmp = np.concatenate([np.arange(len(valid_index)).reshape(-1, 1),
                       valid_index.reshape(-1, 1),
                       valid_score.reshape(-1, 1)], axis=1)
@@ -264,12 +270,13 @@ print('\n', valid_score_df.sort_values(
 fig, axs = plt.subplots(4, 4, figsize=(20, 20))
 list_ = valid_score_df.sort_values(by='valid_score', ascending=True)[
     :4]['index'].values.astype(np.int)
-# list_ = [valid_score_df['valid_score'].idxmin(),valid_score_df['valid_score'].idxmax()]
+# list_ =
+# [valid_score_df['valid_score'].idxmin(),valid_score_df['valid_score'].idxmax()]
 for i, n in enumerate(list_):
-    img = utils.imshow_args(x_vld[n])
+    img = utils.imshow_args(utils.read_image(x_vld[n]))
     axs[i, 0].imshow(img)
     axs[i, 0].set_title('{}.) input image'.format(n))
-    axs[i, 1].imshow(np.squeeze(y_vld[n]), cmap='jet')
+    axs[i, 1].imshow(np.squeeze(utils.read_mask(y_vld[n])), cmap='jet')
     axs[i, 1].set_title('{}.) true mask'.format(n))
     axs[i, 2].imshow(y_valid_pred_proba[n], cmap='jet')
     axs[i, 2].set_title('{}.) predicted mask probabilities'.format(n))
@@ -277,207 +284,102 @@ for i, n in enumerate(list_):
     axs[i, 3].set_title('{}.) predicted mask'.format(n))
 
 sess.close()
-#%%
-if False:
 
-    # In[ ]:
+# %%#####################################################################
+# Load neural network, make prediction for test and apply
+# run length encoding for the submission file.
+# #######################################################################
 
-    # Tune minimal object size for prediction
-    if True:
-        # mn = 'nn0_512_512_3'
-        mn = nn_name[0]
-        u_net = NeuralNetwork()
-        sess = u_net.load_session_from_file(mn)
-        y_valid_pred_proba = u_net.get_prediction(sess, x_vld)
-        y_valid_pred = trsf_proba_to_binary(y_valid_pred_proba, threshold=0.5)
-        sess.close()
+# Soft voting majority.
+inference_batch = 50
+count, rest = divmod(len(x_test), inference_batch)
 
-        tmp = min_object_size
-        min_object_sizes = [1, 3, 5, 7, 9, 20, 30, 40, 50, 60, 70,
-                            80, 90, 100, 110, 120, 130, 140, 150, 200, 300, 400, 500]
-        for mos in min_object_sizes:
-            min_object_size = mos
-            valid_score = get_score(y_vld, y_valid_pred)
-            print('min_object_size = {}: valid_score min/mean/std/max = {:.3f}/{:.3f}/{:.3f}/{:.3f}'.format(mos,
-                                                                                                            np.min(valid_score), np.mean(valid_score), np.std(valid_score), np.max(valid_score)))
-        min_object_size = tmp
+u_net = U_Net(dir_dict=DIR_DICT)
+sess = u_net.load_session_from_file(nn_name)
+y_test_pred_proba = []
+for j in range(0, count * inference_batch, inference_batch):
+    pred = u_net.get_prediction(
+        sess, x_test[j:j + inference_batch],
+        from_paths=True,
+        method=METHOD,
+        tgt_size=(IMG_HEIGHT, IMG_WIDTH)) / len(nn_name)
 
-    # In[ ]:
+    y_test_pred_proba.extend(pred)
 
-    # Check one sample prediction in more detail.
-    # mn = 'nn0_512_512_3'
-    mn = nn_name[0]
-    u_net = NeuralNetwork()
-    sess = u_net.load_session_from_file(mn)
-    n = np.random.randint(len(x_vld))
-    x_true = x_vld[n]
-    y_true = y_vld[n, :, :, 0]
-    y_pred_proba = u_net.get_prediction(
-        sess, np.expand_dims(x_true, axis=0))[0, :, :, 0]
-    y_pred = trsf_proba_to_binary(y_pred_proba, threshold=0.5)
-    sess.close()
+if rest:
+    pred = u_net.get_prediction(
+        sess, x_test[-rest:],
+        from_paths=True,
+        method=METHOD,
+        tgt_size=(IMG_HEIGHT, IMG_WIDTH)) / len(nn_name)
+    y_test_pred_proba.extend(pred)
 
-    fig, axs = plt.subplots(1, 3, figsize=(20, 13))
-    img, img_type = imshow_args(x_true)
-    axs[0].imshow(img, img_type)
-    axs[0].set_title('{}.) input image'.format(n))
-    axs[1].imshow(y_pred_proba, cmap='gray')
-    axs[1].set_title('{}.) predicted mask probabilities'.format(n))
-    axs[2].imshow(y_pred, cmap='gray')
-    axs[2].set_title('{}.) predicted mask'.format(n))
-    plot_score_summary(y_true, y_pred)
+sess.close()
+y_test_pred_proba = utils.normalize(np.array(y_test_pred_proba))
+y_test_pred = utils.trsf_proba_to_binary(y_test_pred_proba)
 
-    # # 8. Make Test Prediction <a class="anchor" id="8-bullet"></a>
+print('y_test_pred.shape = {}'.format(y_test_pred.shape))
 
-    # In[10]:
+# Resize predicted masks to original image size.
+y_test_pred_original_size = []
+for i in range(len(y_test_pred)):
+    if METHOD == 'resize':
+        res_mask = utils.trsf_proba_to_binary(
+            skimage.transform.resize(np.squeeze(y_test_pred[i]),
+                                     (test_df.loc[i, 'img_height'], test_df.loc[
+                                         i, 'img_width']),
+                                     mode='constant', preserve_range=True))
+    else:
+        res_mask = np.squeeze(y_test_pred[i])
+    y_test_pred_original_size.append(res_mask)
+y_test_pred_original_size = np.array(y_test_pred_original_size)
 
-    # Collection of methods for run length encoding.
-    # For example, '1 3 10 5' implies pixels 1,2,3,10,11,12,13,14 are to be included
-    # in the mask. The pixels are one-indexed and numbered from top to bottom,
-    # then left to right: 1 is pixel (1,1), 2 is pixel (2,1), etc.
+print('y_test_pred_original_size.shape = {}'.format(
+    y_test_pred_original_size.shape))
 
-    def rle_of_binary(x):
-        """ Run length encoding of a binary 2D array. """
-        dots = np.where(x.T.flatten() == 1)[0]  # indices from top to down
-        run_lengths = []
-        prev = -2
-        for b in dots:
-            if (b > prev + 1):
-                run_lengths.extend((b + 1, 0))
-            run_lengths[-1] += 1
-            prev = b
-        return run_lengths
+# Run length encoding of predicted test masks.
+test_pred_rle = []
+test_pred_ids = []
+for n, id_ in enumerate(test_df['img_id']):
+    min_object_size = 20 * test_df.loc[n, 'img_height'] * test_df.loc[n, 'img_width'] / (IMG_WIDTH *
+                                                                                         IMG_HEIGHT)
+    rle = list(utils.mask_to_rle(
+        y_test_pred_original_size[n], min_object_size=min_object_size))
+    test_pred_rle.extend(rle)
+    test_pred_ids.extend([id_] * len(rle))
 
-    def mask_to_rle(mask, cutoff=.5, min_object_size=20):
-        """ Return run length encoding of mask. """
-        # segment image and label different objects
-        lab_mask = skimage.morphology.label(mask > cutoff)
+print('test_pred_ids.shape = {}'.format(np.array(test_pred_ids).shape))
+print('test_pred_rle.shape = {}'.format(np.array(test_pred_rle).shape))
 
-        # Keep only objects that are large enough.
-        (mask_labels, mask_sizes) = np.unique(lab_mask, return_counts=True)
-        if (mask_sizes < min_object_size).any():
-            mask_labels = mask_labels[mask_sizes < min_object_size]
-            for n in mask_labels:
-                lab_mask[lab_mask == n] = 0
-            lab_mask = skimage.morphology.label(lab_mask > cutoff)
+# Inspect a test prediction and check run length encoding.
+# n = np.random.randint(len(x_test))
+n = 921
+mask = y_test_pred_original_size[n]
+rle = list(utils.mask_to_rle(mask))
+mask_rec = utils.rle_to_mask(rle, mask.shape)
+print('Run length encoding: {} matches, {} misses'.format(
+    (mask_rec == mask).sum(), (mask_rec != mask).sum()))
 
-        # Loop over each object excluding the background labeled by 0.
-        for i in range(1, lab_mask.max() + 1):
-            yield rle_of_binary(lab_mask == i)
+fig, axs = plt.subplots(2, 3, figsize=(20, 13))
+axs[0, 0].imshow(utils.read_image(test_df['image_path'].loc[n]))
+axs[0, 0].set_title('{}.) original test image'.format(n))
+axs[0, 1].imshow(np.squeeze((utils.read_image(x_test[n]))))
+axs[0, 1].set_title('{}.) transformed test image'.format(n))
+axs[0, 2].imshow(np.squeeze(y_test_pred_proba[n]), cm.gray)
+axs[0, 2].set_title('{}.) predicted test mask probabilities'.format(n))
+axs[1, 0].imshow(np.squeeze(y_test_pred_proba[n]), cm.gray)
+axs[1, 0].set_title('{}.) predicted test mask'.format(n))
+axs[1, 1].imshow(np.square(y_test_pred_original_size[n]), cm.gray)
+axs[1, 1].set_title(
+    '{}.) predicted final test mask in original size'.format(n))
+axs[1, 2].imshow(mask_rec[:, :], cm.gray)
+axs[1, 2].set_title(
+    '{}.) final mask recovered from run length encoding'.format(n))
 
-    def rle_to_mask(rle, img_shape):
-        ''' Return mask from run length encoding.'''
-        mask_rec = np.zeros(img_shape).flatten()
-        for n in range(len(rle)):
-            for i in range(0, len(rle[n]), 2):
-                for j in range(rle[n][i + 1]):
-                    mask_rec[rle[n][i] - 1 + j] = 1
-        return mask_rec.reshape(img_shape[1], img_shape[0]).T
-
-    # In[11]:
-
-    # Load neural network, make prediction for test masks, resize predicted
-    # masks to original image size and apply run length encoding for the
-    # submission file.
-
-    # Load neural network and make prediction for masks.
-    # nn_name = ['nn0_512_512_3']
-    # nn_name = ['nn0_384_384_3_res']
-
-    # Soft voting majority.
-    inference_batch = 200
-    count, rest = divmod(len(x_test), inference_batch)
-    for i, mn in enumerate(nn_name):
-        u_net = NeuralNetwork()
-        sess = u_net.load_session_from_file(mn)
-        y_test_pred_proba = []
-        j = 0
-        for k in range(count):
-            if i == 0:
-                pred = u_net.get_prediction(
-                    sess, x_test[j:j + inference_batch]) / len(nn_name)
-            else:
-                pred += u_net.get_prediction(sess,
-                                             x_test[j:j + inference_batch]) / len(nn_name)
-            j += inference_batch
-            y_test_pred_proba.extend(pred)
-
-        if rest:
-            if i == 0:
-                pred = u_net.get_prediction(sess, x_test[j:]) / len(nn_name)
-            else:
-                pred += u_net.get_prediction(sess, x_test[j:]) / len(nn_name)
-        y_test_pred_proba.extend(pred)
-        print(len(y_test_pred_proba))
-        sess.close()
-
-    y_test_pred = trsf_proba_to_binary(y_test_pred_proba)[:, :, :, 0]
-
-    print('y_test_pred.shape = {}'.format(y_test_pred.shape))
-
-    # Resize predicted masks to original image size.
-    y_test_pred_original_size = []
-    for i in range(len(y_test_pred)):
-        res_mask = trsf_proba_to_binary(skimage.transform.resize(np.squeeze(y_test_pred[i]),
-                                                                 (test_df.loc[i, 'img_height'], test_df.loc[
-                                                                  i, 'img_width']),
-                                                                 mode='constant', preserve_range=True))
-        y_test_pred_original_size.append(res_mask)
-    y_test_pred_original_size = np.array(y_test_pred_original_size)
-
-    print('y_test_pred_original_size.shape = {}'.format(
-        y_test_pred_original_size.shape))
-
-    # Run length encoding of predicted test masks.
-    test_pred_rle = []
-    test_pred_ids = []
-    for n, id_ in enumerate(test_df['img_id']):
-        min_object_size = 20 * test_df.loc[n, 'img_height'] * test_df.loc[n, 'img_width'] / (IMG_WIDTH *
-                                                                                             IMG_HEIGHT)
-        rle = list(mask_to_rle(
-            y_test_pred_original_size[n], min_object_size=50))
-        test_pred_rle.extend(rle)
-        test_pred_ids.extend([id_] * len(rle))
-
-    print('test_pred_ids.shape = {}'.format(np.array(test_pred_ids).shape))
-    print('test_pred_rle.shape = {}'.format(np.array(test_pred_rle).shape))
-
-    # In[32]:
-
-    # Inspect a test prediction and check run length encoding.
-    # n = np.random.randint(len(x_test))
-    n = 921
-    mask = y_test_pred_original_size[n]
-    rle = list(mask_to_rle(mask))
-    mask_rec = rle_to_mask(rle, mask.shape)
-    print('Run length encoding: {} matches, {} misses'.format(
-        (mask_rec == mask).sum(), (mask_rec != mask).sum()))
-
-    fig, axs = plt.subplots(2, 3, figsize=(20, 13))
-    axs[0, 0].imshow(read_image(test_df['image_path'].loc[n]))
-    axs[0, 0].set_title('{}.) original test image'.format(n))
-    img, img_type = imshow_args(x_test[n])
-    axs[0, 1].imshow(img, img_type)
-    axs[0, 1].set_title('{}.) transformed test image'.format(n))
-    axs[0, 2].imshow(y_test_pred_proba[n][:, :, 0], cm.gray)
-    axs[0, 2].set_title('{}.) predicted test mask probabilities'.format(n))
-    axs[1, 0].imshow(y_test_pred_proba[n][:, :, 0], cm.gray)
-    axs[1, 0].set_title('{}.) predicted test mask'.format(n))
-    axs[1, 1].imshow(y_test_pred_original_size[n], cm.gray)
-    axs[1, 1].set_title(
-        '{}.) predicted final test mask in original size'.format(n))
-    axs[1, 2].imshow(mask_rec[:, :], cm.gray)
-    axs[1, 2].set_title(
-        '{}.) final mask recovered from run length encoding'.format(n))
-
-    # # 9. Submit <a class="anchor" id="9-bullet"></a>
-
-    # In[33]:
-
-    # Create submission file
-    sub = pd.DataFrame()
-    sub['ImageId'] = test_pred_ids
-    sub['EncodedPixels'] = pd.Series(test_pred_rle).apply(
-        lambda x: ' '.join(str(y) for y in x))
-    sub.to_csv('sub-dsbowl2018-1.csv', index=False)
-    sub.head()
+# Create submission file
+sub = pd.DataFrame()
+sub['ImageId'] = test_pred_ids
+sub['EncodedPixels'] = pd.Series(test_pred_rle).apply(
+    lambda x: ' '.join(str(y) for y in x))
+sub.to_csv('sub-dsbowl2018-2.csv', index=False)
+sub.head()

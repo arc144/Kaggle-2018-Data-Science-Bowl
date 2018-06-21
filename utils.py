@@ -6,6 +6,7 @@ import pandas as pd
 import sys
 import tqdm
 import keras.preprocessing.image
+import skimage
 from data_augmentation import random_transform
 
 # Collection of methods for data operations. Implemented are functions to read
@@ -238,14 +239,23 @@ def load_images(paths, color_mode=cv2.IMREAD_COLOR,
                                   seed=seed)
             ret.append(im)
             seeds.append(seed)
-        else:
+
+        elif method == 'resize':
             ret.append(read_image(path,
                                   color_mode=color_mode,
                                   target_size=tgt_size,
                                   method=method,
                                   seed=seed))
 
+        elif method is None:
+            ret.append(read_image(path,
+                                  color_mode=color_mode,
+                                  target_size=None,
+                                  method=method,
+                                  seed=seed))
+
     ret = np.array(ret)
+
     if len(ret.shape) == 3:
         ret = np.expand_dims(ret, axis=-1)
 
@@ -266,14 +276,19 @@ def load_masks(paths, tgt_size=None, method='resize', seeds=None):
             ret.extend(read_mask(path,
                                  target_size=tgt_size,
                                  method=method))
-        if method == 'random_crop':
+        elif method == 'random_crop':
             ret.append(read_mask(path,
                                  target_size=tgt_size,
                                  method=method,
                                  seed=seeds[i]))
-        else:
+
+        elif method == 'resize':
             ret.append(read_mask(path,
                                  target_size=tgt_size,
+                                 method=method))
+        elif method is None:
+            ret.append(read_mask(path,
+                                 target_size=None,
                                  method=method))
 
     ret = np.array(ret)
@@ -295,27 +310,35 @@ def normalize_masks(data):
     return normalize(data, type_=1)
 
 
-def normalize(data, type_=1):
+def normalize(data, type_=0):
     """Normalize data."""
-    if type_ == 0:
-        # Convert pixel values from [0:255] to [0:1] by global factor
-        data = data.astype(np.float32) / data.max()
-    if type_ == 1:
-        # Convert pixel values from [0:255] to [0:1] by local factor
-        div = data.max(axis=tuple(
-            np.arange(1, len(data.shape))), keepdims=True)
-        div[div < 0.01 * data.mean()] = 1.  # protect against too small pixel intensities
-        data = data.astype(np.float32) / div
-    if type_ == 2:
-        # Standardisation of each image
-        data = data.astype(np.float32) / data.max()
-        mean = data.mean(axis=tuple(
-            np.arange(1, len(data.shape))), keepdims=True)
-        std = data.std(axis=tuple(
-            np.arange(1, len(data.shape))), keepdims=True)
-        data = (data - mean) / std
+    if len(data.shape) >= 3:
+        if type_ == 0:
+            # Convert pixel values from [0:255] to [0:1] by global factor
+            data = (data - data.min()) / (data.max() - data.min())
+        if type_ == 1:
+            # Convert pixel values from [0:255] to [0:1] by local factor
+            div = data.max(axis=tuple(
+                np.arange(1, len(data.shape))), keepdims=True)
+            div[div < 0.01 * data.mean()] = 1.  # protect against too small pixel intensities
+            data = data.astype(np.float32) / div
+        if type_ == 2:
+            # Standardisation of each image
+            data = data.astype(np.float32) / data.max()
+            mean = data.mean(axis=tuple(
+                np.arange(1, len(data.shape))), keepdims=True)
+            std = data.std(axis=tuple(
+                np.arange(1, len(data.shape))), keepdims=True)
+            data = (data - mean) / std
 
-    return data
+    # One by one in case images have different shapes
+    elif len(data.shape) == 1:
+        data = list(data)
+        for i in range(len(data)):
+            data[i] = (data[i] - data[i].min()) / \
+                (data[i].max() - data[i].min())
+
+    return np.array(data)
 
 
 def trsf_proba_to_binary(y_data, threshold=0.5):
@@ -515,3 +538,49 @@ def augment_images_masks(imgs, masks):
                              channel_shuffle=False,
                              seed=seed))
     return np.array(ret_imgs), np.array(ret_masks)
+
+
+# Collection of methods for run length encoding.
+# For example, '1 3 10 5' implies pixels 1,2,3,10,11,12,13,14 are to be included
+# in the mask. The pixels are one-indexed and numbered from top to bottom,
+# then left to right: 1 is pixel (1,1), 2 is pixel (2,1), etc.
+
+def rle_of_binary(x):
+    """ Run length encoding of a binary 2D array. """
+    dots = np.where(x.T.flatten() == 1)[0]  # indices from top to down
+    run_lengths = []
+    prev = -2
+    for b in dots:
+        if (b > prev + 1):
+            run_lengths.extend((b + 1, 0))
+        run_lengths[-1] += 1
+        prev = b
+    return run_lengths
+
+
+def mask_to_rle(mask, cutoff=.5, min_object_size=20):
+    """ Return run length encoding of mask. """
+    # segment image and label different objects
+    lab_mask = skimage.morphology.label(mask > cutoff)
+
+    # Keep only objects that are large enough.
+    (mask_labels, mask_sizes) = np.unique(lab_mask, return_counts=True)
+    if (mask_sizes < min_object_size).any():
+        mask_labels = mask_labels[mask_sizes < min_object_size]
+        for n in mask_labels:
+            lab_mask[lab_mask == n] = 0
+        lab_mask = skimage.morphology.label(lab_mask > cutoff)
+
+    # Loop over each object excluding the background labeled by 0.
+    for i in range(1, lab_mask.max() + 1):
+        yield rle_of_binary(lab_mask == i)
+
+
+def rle_to_mask(rle, img_shape):
+    ''' Return mask from run length encoding.'''
+    mask_rec = np.zeros(img_shape).flatten()
+    for n in range(len(rle)):
+        for i in range(0, len(rle[n]), 2):
+            for j in range(rle[n][i + 1]):
+                mask_rec[rle[n][i] - 1 + j] = 1
+    return mask_rec.reshape(img_shape[1], img_shape[0]).T
