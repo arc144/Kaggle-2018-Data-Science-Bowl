@@ -635,10 +635,10 @@ class U_Net(ConvNetwork_ABC):
         elif self.loss == 'focal':
             gamma = 2
             epilson = 1e-5
-            prob = tf.nn.softmax(self.logits_tf)
-            probt = prob * self.y_tf + (1 - prob) * (1 - self.y_tf)
 
-            ce = -tf.log(probt)
+            ce = tf.nn.softmax_cross_entropy_with_logits(logits=self.logits_tf,
+                                                         labels=self.y_tf)
+            probt = tf.exp(-ce)
             loss = tf.pow((1 - probt), gamma) * ce
             loss = tf.reduce_mean(loss)
 
@@ -724,32 +724,35 @@ class U_Net(ConvNetwork_ABC):
         return intersection / union
 
     def get_prediction(self, sess, x_data, from_paths=False,
+                       check_compatibility=False,
+                       compatibility_multiplier=32,
                        tgt_size=None, method=None,
                        keep_prob=1.0):
         """ Prediction of the neural network graph. """
         # Load images if needed
         if from_paths:
             x_data = utils.load_images(
-                x_data, tgt_size=tgt_size, method=method)
+                x_data, tgt_size=tgt_size, method=method,
+                check_compatibility=check_compatibility,
+                compatibility_multiplier=compatibility_multiplier)
 
         # Do it one by one if different sizes
         if from_paths and method is None:
             pred = []
             for x in x_data:
-                print(x.shape)
                 pred.append(
                     sess.run(tf.nn.softmax(self.logits_tf),
                              feed_dict={self.x_tf: np.expand_dims(x, axis=0),
                                         self.keep_prob_tf: keep_prob}))
-            pred = np.array(pred)
-
+                if pred[-1].shape[-1] == 2:
+                    pred[-1] = pred[-1][:, :, :, 1]
         # Do it for all the batch
         else:
             pred = sess.run(tf.nn.softmax(self.logits_tf),
                             feed_dict={self.x_tf: x_data,
                                        self.keep_prob_tf: keep_prob})
-        if pred.shape[-1] == 2:
-            pred = pred[:, :, :, 1]
+            if pred.shape[-1] == 2:
+                pred = pred[:, :, :, 1]
 
         return pred
 

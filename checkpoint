@@ -1,2 +1,2 @@
-model_checkpoint_path: "/media/data/Kaggle/Kaggle-2018-Data-Science-Bowl/unet_xception_256crops_wdice+bce"
-all_model_checkpoint_paths: "/media/data/Kaggle/Kaggle-2018-Data-Science-Bowl/unet_xception_256crops_wdice+bce"
+model_checkpoint_path: "/media/data/Kaggle/Kaggle-2018-Data-Science-Bowl/unet_test"
+all_model_checkpoint_paths: "/media/data/Kaggle/Kaggle-2018-Data-Science-Bowl/unet_test"

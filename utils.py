@@ -15,7 +15,10 @@ from data_augmentation import random_transform
 
 
 def read_image(filepath, color_mode=cv2.IMREAD_COLOR,
-               target_size=None, method='resize', seed=None):
+               target_size=None, method='resize',
+               check_compatibility=False,
+               compatibility_multiplier=32,
+               seed=None):
     """Read an image from a file and resize it."""
     img = cv2.imread(filepath, color_mode)
     if target_size:
@@ -27,7 +30,18 @@ def read_image(filepath, color_mode=cv2.IMREAD_COLOR,
             img, seed = random_crop(
                 img, crop_size=target_size, seed=seed, return_seed=True)
             return img, seed
-
+    else:
+        # Check if original sized image is compatible with network
+        if check_compatibility:
+            height, width = img.shape[0], img.shape[1]
+            hquo, hrest = divmod(height, compatibility_multiplier)
+            wquo, wrest = divmod(width, compatibility_multiplier)
+            if hrest or wrest:
+                # Reshape to closest compatible value
+                img = cv2.resize(img,
+                                 (hquo * compatibility_multiplier,
+                                  wquo * compatibility_multiplier),
+                                 interpolation=cv2.INTER_AREA)
     return img
 
 
@@ -220,7 +234,9 @@ def load_images_masks(x_paths, y_paths, color_mode=cv2.IMREAD_COLOR,
 
 
 def load_images(paths, color_mode=cv2.IMREAD_COLOR,
-                tgt_size=None, method='resize', seed=None):
+                tgt_size=None, method='resize',
+                check_compatibility=False,
+                compatibility_multiplier=32, seed=None):
     '''Wrapper for read_image multiple times'''
     ret = []
     seeds = []
@@ -248,11 +264,14 @@ def load_images(paths, color_mode=cv2.IMREAD_COLOR,
                                   seed=seed))
 
         elif method is None:
-            ret.append(read_image(path,
-                                  color_mode=color_mode,
-                                  target_size=None,
-                                  method=method,
-                                  seed=seed))
+            ret.append(read_image(
+                path,
+                color_mode=color_mode,
+                target_size=None,
+                method=method,
+                check_compatibility=check_compatibility,
+                compatibility_multiplier=compatibility_multiplier,
+                seed=seed))
 
     ret = np.array(ret)
 
@@ -343,7 +362,12 @@ def normalize(data, type_=0):
 
 def trsf_proba_to_binary(y_data, threshold=0.5):
     """Transform propabilities into binary values 0 or 1."""
-    return np.greater(y_data, threshold).astype(np.uint8)
+    if isinstance(y_data, np.ndarray):
+        y_data = np.greater(y_data, threshold).astype(np.uint8)
+    elif isinstance(y_data, list):
+        for i in range(len(y_data)):
+            y_data[i] = np.greater(y_data[i], threshold).astype(np.uint8)
+    return y_data
 
 
 def invert_imgs(imgs, cutoff=.5):
@@ -540,10 +564,26 @@ def augment_images_masks(imgs, masks):
     return np.array(ret_imgs), np.array(ret_masks)
 
 
+def resize_as_original(y_test_pred, test_sizes):
+    # Resize predicted masks to original image size.
+    y_test_pred_original_size = []
+    for i in range(len(y_test_pred)):
+        original_size = test_sizes[i]
+        if y_test_pred[i].shape[:2] != original_size:
+            res_mask = trsf_proba_to_binary(
+                skimage.transform.resize(np.squeeze(y_test_pred[i]),
+                                         original_size,
+                                         mode='constant', preserve_range=True))
+        else:
+            res_mask = np.squeeze(y_test_pred[i])
+        y_test_pred_original_size.append(res_mask)
+    return np.array(y_test_pred_original_size)
+
 # Collection of methods for run length encoding.
 # For example, '1 3 10 5' implies pixels 1,2,3,10,11,12,13,14 are to be included
 # in the mask. The pixels are one-indexed and numbered from top to bottom,
 # then left to right: 1 is pixel (1,1), 2 is pixel (2,1), etc.
+
 
 def rle_of_binary(x):
     """ Run length encoding of a binary 2D array. """
@@ -584,3 +624,16 @@ def rle_to_mask(rle, img_shape):
             for j in range(rle[n][i + 1]):
                 mask_rec[rle[n][i] - 1 + j] = 1
     return mask_rec.reshape(img_shape[1], img_shape[0]).T
+
+
+def mask_to_rle_wrapper(y_test_pred_original_size, test_ids,
+                        min_object_size=20):
+    # Run length encoding of predicted test masks.
+    test_pred_rle = []
+    test_pred_ids = []
+    for n, id_ in enumerate(test_ids):
+        rle = list(mask_to_rle(
+            y_test_pred_original_size[n], min_object_size=min_object_size))
+        test_pred_rle.extend(rle)
+        test_pred_ids.extend([id_] * len(rle))
+    return test_pred_rle, test_pred_ids
