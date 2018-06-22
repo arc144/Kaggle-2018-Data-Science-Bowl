@@ -5,8 +5,10 @@ from scipy import ndimage
 import pandas as pd
 import sys
 import tqdm
+from scipy.ndimage import label
 import keras.preprocessing.image
 import skimage
+from skimage.morphology import watershed, binary_dilation
 from data_augmentation import random_transform
 
 # Collection of methods for data operations. Implemented are functions to read
@@ -218,7 +220,8 @@ def load_test_data(test_df, image_size=(256, 256)):
 
 
 def load_images_masks(x_paths, y_paths, color_mode=cv2.IMREAD_COLOR,
-                      tgt_size=None, method='resize', seeds=None):
+                      tgt_size=None, method='resize',
+                      seeds=None):
     '''Wrapper for load_images and load_masks'''
     if method == 'random_crop':
         imgs, seeds = load_images(x_paths, color_mode=color_mode,
@@ -230,6 +233,7 @@ def load_images_masks(x_paths, y_paths, color_mode=cv2.IMREAD_COLOR,
     masks = load_masks(y_paths,
                        method=method, tgt_size=tgt_size,
                        seeds=seeds)
+
     return imgs, masks
 
 
@@ -291,29 +295,63 @@ def load_masks(paths, tgt_size=None, method='resize', seeds=None):
     ret = []
 
     for i, path in enumerate(paths):
-        if method == 'crop':
-            ret.extend(read_mask(path,
-                                 target_size=tgt_size,
-                                 method=method))
-        elif method == 'random_crop':
-            ret.append(read_mask(path,
-                                 target_size=tgt_size,
-                                 method=method,
-                                 seed=seeds[i]))
-
-        elif method == 'resize':
-            ret.append(read_mask(path,
-                                 target_size=tgt_size,
-                                 method=method))
+        if method == 'resize':
+            ret.append(generate_unjoint_mask(path,
+                                             tgt_size=tgt_size))
         elif method is None:
-            ret.append(read_mask(path,
-                                 target_size=None,
-                                 method=method))
+            ret.append(generate_unjoint_mask(path,
+                                             tgt_size=None))
 
-    ret = np.array(ret)
-    if len(ret.shape) == 3:
-        ret = np.expand_dims(ret, axis=-1)
-    return normalize(ret, type_=0)
+    full_mask = normalize(np.array([x[0] for x in ret]), type_=0)
+    borderless_mask = normalize(np.array([x[1] for x in ret]), type_=0)
+    borders = normalize(np.array([x[2] for x in ret]), type_=0)
+
+    if len(full_mask.shape) == 3:
+        full_mask = np.expand_dims(full_mask, axis=-1)
+        borderless_mask = np.expand_dims(borderless_mask, axis=-1)
+        borders = np.expand_dims(borders, axis=-1)
+
+    return np.concatenate(
+        [full_mask, 1 - full_mask, borderless_mask, borders], -1)
+
+
+def marker_from_mask(directory):
+    '''Generate markers for watershed from masks'''
+    for i, filename in enumerate(next(os.walk(directory))[2]):
+        mask_path = os.path.join(directory, filename)
+        mask_tmp = read_image(mask_path, cv2.IMREAD_GRAYSCALE, None)
+        m = label(mask_tmp)[0]
+        if not i:
+            marker = (i + 1) * m
+        else:
+            marker = marker + (i + 1) * m
+    return marker
+
+
+def overlap_from_mask(directory, selem=3):
+    for i, filename in enumerate(next(os.walk(directory))[2]):
+        mask_path = os.path.join(directory, filename)
+        mask_tmp = read_image(mask_path, cv2.IMREAD_GRAYSCALE, None)
+        m = binary_dilation(
+            label(mask_tmp)[0], selem=np.ones([selem, selem])).astype(np.int32)
+
+        if not i:
+            border = m
+        else:
+            border = np.add(border, m)
+    border[border == 1] = 0
+    border[border > 1] = 1
+    return border.astype(np.uint8)
+
+
+def generate_unjoint_mask(directory, selem=3, tgt_size=None):
+    '''Generate unjoint masks to train'''
+    mask = read_mask(directory)
+    overlap = overlap_from_mask(directory, selem)
+    if tgt_size is not None:
+        mask = cv2.resize(mask, tgt_size, interpolation=cv2.INTER_AREA)
+        overlap = cv2.resize(overlap, tgt_size, interpolation=cv2.INTER_AREA)
+    return mask, mask * (1 - overlap), overlap
 
 # Collection of methods for basic data manipulation like normalizing,
 # inverting, color transformation and generating new images/masks
@@ -497,10 +535,9 @@ def patchfy(im, crop_size=(256, 256)):
                 start_w = width - crop_size[1]
                 end_w = width
             # Add crop to patches array
-            patches[h * n_crops_w + w, :, :, :] = \
-                im[start_h:end_h,
-                   start_w:end_w,
-                    :]
+            patches[h * n_crops_w + w, :, :, :] = im[start_h:end_h,
+                                                     start_w:end_w,
+                                                     :]
     return patches
 
 

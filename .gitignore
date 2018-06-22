@@ -119,3 +119,4 @@ Saved Weights/
 *.csv
 *.data*
 *.ipynb
+test.py

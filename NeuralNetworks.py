@@ -473,10 +473,15 @@ class U_Net(ConvNetwork_ABC):
                     logits[1], name='borders_logits_tf')
 
             # Target tensor.
-            shape = [None, None, None, self.output_shape[-1]]
+            shape = [None, None, None, None]
             # shape.extend(self.output_shape)
             self.y_tf = tf.placeholder(dtype=tf.float32, shape=shape,
                                        name='y_tf')  # (.,128,128,1)
+            self.full_mask_y_tf = tf.identity(
+                self.y_tf[:, :, :, :1], name='full_mask_y_tf')
+            if self.multi_head:
+                self.border_y_tf = tf.identity(
+                    self.y_tf[:, :, :, 1:], name='border_y_tf')
 
             # Weights tensor.
             shape = [None, self.input_shape[0], self.input_shape[1], 1]
@@ -484,7 +489,14 @@ class U_Net(ConvNetwork_ABC):
                                        name='w_tf')  # (.,128,128,1)
 
             # Loss tensor
-            self.loss_tf = tf.identity(self.loss_tensor(), name='loss_tf')
+            loss = tf.reduce_sum([l(self.full_mask_logits_tf, self.full_mask_y_tf)
+                                  for l in self.loss[0]])
+            if self.multi_head:
+                loss = loss + tf.reduce_sum(
+                    [l(self.borders_logits_tf, self.borders_y_tf)
+                     for l in self.loss[1]])
+
+            self.loss_tf = tf.identity(loss, name='loss_tf')
 
             # Optimization tensor.
             self.train_step_all_tf, self.train_step_top_tf = self.optimizer_tensor()
@@ -564,6 +576,7 @@ class U_Net(ConvNetwork_ABC):
         self.full_mask_logits_tf = graph.get_tensor_by_name(
             "full_mask_logits_tf:0")
         if self.multi_head:
+            self.borders_y_tf = graph.get_tensor_by_name("borders_y_tf:0")
             self.borders_logits_tf = graph.get_tensor_by_name(
                 "borders_logits_tf:0")
         if not update_cost:
@@ -572,123 +585,6 @@ class U_Net(ConvNetwork_ABC):
             self.loss_tf = self.loss_tensor()
         self.training_tf = graph.get_tensor_by_name("training_tf:0")
         self.extra_update_ops_tf = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
-
-    def loss_tensor(self):
-        '''Reimplement this function and return the loss'''
-        # Softmax
-        # logits = tf.reshape(self.logits_tf, [-1, 1])
-        # labels = tf.cast(tf.reshape(self.y_tf, [-1]), tf.int32)
-        onehot_labels = tf.one_hot(tf.cast(tf.squeeze(self.y_tf), tf.uint8), 2)
-        if self.loss == 'ce':
-            if self.use_weights:
-                cls_weights = self.calc_class_weights(onehot_labels)
-                weights = tf.squeeze(self.w_tf) + cls_weights
-            else:
-                weights = 1.0
-            loss = tf.losses.softmax_cross_entropy(
-                onehot_labels=onehot_labels,
-                logits=self.full_mask_logits_tf,
-                weights=weights)
-            loss = tf.reduce_mean(loss)
-
-        elif self.loss == 'dice':
-            # Dice loss based on dice score coefficent.
-            axis = np.arange(1, len(self.output_shape) + 1)
-            epilson = 1e-5
-            corr = tf.reduce_sum(
-                onehot_labels * self.full_mask_logits_tf, axis=axis)
-            l2_pred = tf.reduce_sum(
-                tf.square(self.full_mask_logits_tf), axis=axis)
-            l2_true = tf.reduce_sum(tf.square(onehot_labels), axis=axis)
-            dice_coeff = (2. * corr + epilson) / (l2_true + l2_pred + epilson)
-            loss = tf.subtract(1., tf.reduce_mean(dice_coeff))
-
-        elif self.loss == 'wdice':
-            # Dice loss based on balanced dice score coefficent.
-            axis = [1, 2]
-            epilson = 1e-5
-            total = self.output_shape[0] * self.output_shape[1]
-            w = tf.reduce_sum(onehot_labels, axis=axis) / total
-            I = tf.reduce_sum(
-                onehot_labels * self.full_mask_logits_tf, axis=axis)
-            balanced_I = I * (1 - w + epilson)
-            l2_pred = tf.reduce_sum(
-                tf.square(self.full_mask_logits_tf), axis=axis)
-            l2_true = tf.reduce_sum(tf.square(onehot_labels), axis=axis)
-            dice_coeff = (2. * balanced_I + epilson) / \
-                (l2_true + l2_pred + epilson)
-            loss = tf.subtract(1., tf.reduce_mean(dice_coeff))
-
-        elif self.loss == 'ce+wdice':
-            # Binary cross entropy
-            if self.use_weights:
-                cls_weights = self.calc_class_weights(onehot_labels)
-                weights = tf.squeeze(self.w_tf) + cls_weights
-            else:
-                weights = 1.0
-            loss1 = tf.losses.softmax_cross_entropy(
-                onehot_labels=onehot_labels,
-                logits=self.full_mask_logits_tf,
-                weights=weights)
-            loss1 = tf.reduce_mean(loss1)
-
-            # Soft dice loss
-            axis = [1, 2]
-            epilson = 1e-5
-            total = self.output_shape[0] * self.output_shape[1]
-            w = tf.reduce_sum(onehot_labels, axis=axis) / total
-            I = tf.reduce_sum(
-                onehot_labels * self.full_mask_logits_tf, axis=axis)
-            balanced_I = I * (1 - w + epilson)
-            l2_pred = tf.reduce_sum(
-                tf.square(self.full_mask_logits_tf), axis=axis)
-            l2_true = tf.reduce_sum(tf.square(onehot_labels), axis=axis)
-            dice_coeff = (2. * balanced_I + epilson) / \
-                (l2_true + l2_pred + epilson)
-            loss2 = tf.subtract(1., tf.reduce_mean(dice_coeff))
-
-            loss = loss1 + loss2
-
-        elif self.loss == 'wdice+ce+entropy_penalty':
-            epilson = 1e-5
-            beta = 1.0
-            # ce
-            loss0 = tf.losses.softmax_cross_entropy(
-                onehot_labels=onehot_labels,
-                logits=self.full_mask_logits_tf)
-            loss0 = tf.reduce_mean(loss0)
-            # entropy penalty
-            prob = tf.nn.softmax(self.full_mask_logits_tf) * onehot_labels
-            entropy = - prob * tf.log(prob + epilson) / tf.log(10.)
-            loss1 = tf.reduce_mean(beta * entropy)
-
-            # Soft dice loss
-            logits_tf = tf.expand_dims(
-                self.full_mask_logits_tf[:, :, :, 1], axis=-1)
-            axis = [1, 2]
-            total = self.output_shape[0] * self.output_shape[1]
-            w = tf.reduce_sum(self.y_tf, axis=axis) / total
-            I = tf.reduce_sum(self.y_tf * logits_tf, axis=axis)
-            balanced_I = I * (1 - w + epilson)
-            l2_pred = tf.reduce_sum(tf.square(logits_tf), axis=axis)
-            l2_true = tf.reduce_sum(tf.square(self.y_tf), axis=axis)
-            dice_coeff = (2. * balanced_I + epilson) / \
-                (l2_true + l2_pred + epilson)
-            loss2 = tf.subtract(1., tf.reduce_mean(dice_coeff))
-
-            loss = loss0 + loss1 + loss2
-
-        elif self.loss == 'focal':
-            gamma = 2
-            epilson = 1e-5
-
-            ce = tf.nn.softmax_cross_entropy_with_logits(logits=self.full_mask_logits_tf,
-                                                         labels=self.y_tf)
-            probt = tf.exp(-ce)
-            loss = tf.pow((1 - probt), gamma) * ce
-            loss = tf.reduce_mean(loss)
-
-        return loss
 
     def optimizer_tensor(self):
         """Optimization tensor."""
@@ -704,17 +600,6 @@ class U_Net(ConvNetwork_ABC):
                 var_list=self.non_initialized_weights,
                 name='train_step_tf')
         return optimizer_all, optimizer_top
-
-    def calc_class_weights(self, onehot_labels):
-        '''Compute the unbalacing factor class weights'''
-        total = self.input_shape[0] * self.input_shape[1]
-        values = tf.reduce_sum(onehot_labels,
-                               axis=[1, 2],
-                               keepdims=True) / total
-        cls_weights = tf.reduce_sum(onehot_labels * values,
-                                    axis=-1,
-                                    name='cls_weights')
-        return cls_weights
 
     def next_mini_batch(self, method, tgt_size):
         """Get the next mini batch."""
@@ -736,7 +621,6 @@ class U_Net(ConvNetwork_ABC):
         end = self.index_in_epoch
 
         # Original data.
-
         x_tr, y_tr = utils.load_images_masks(
             self.x_train[self.perm_array[start:end]],
             self.y_train[self.perm_array[start:end]],
@@ -744,7 +628,8 @@ class U_Net(ConvNetwork_ABC):
 
         # Use augmented data.
         if self.train_on_augmented_data:
-            x_tr, y_tr = utils.augment_images_masks(x_tr, y_tr)
+            x_tr, y_tr = utils.augment_images_masks(
+                x_tr, y_tr)
             y_tr = utils.trsf_proba_to_binary(y_tr)
 
         return x_tr, y_tr, None
@@ -886,8 +771,10 @@ class U_Net(ConvNetwork_ABC):
 
                 self.n_log_step += 1  # Current number of log steps.
 
-                trn_dct = dict(x=self.x_train, y=self.y_train, w=self.w_train)
-                val_dct = dict(x=self.x_valid, y=self.y_valid, w=self.w_valid)
+                trn_dct = dict(x=self.x_train,
+                               y=self.y_train, w=self.w_train)
+                val_dct = dict(x=self.x_valid,
+                               y=self.y_valid, w=self.w_valid)
                 for dct in [trn_dct, val_dct]:
                     # Random ids for eval (same size as val)
                     ids = np.arange(len(dct['x']))
@@ -908,8 +795,8 @@ class U_Net(ConvNetwork_ABC):
                     dct['loss'] = sess.run(self.loss_tf,
                                            feed_dict=dct['feed_dict'])
                     pred = self.get_prediction(sess, x)
-                    dct['score'] = np.mean(self.get_score(pred, y))
-                    dct['iou'] = np.mean(self.get_IoU(pred, y))
+                    dct['score'] = np.mean(self.get_score(pred, y[:, :, :, 0]))
+                    dct['iou'] = np.mean(self.get_IoU(pred, y[:, :, :, 0]))
 
                 print(('{:.2f} epoch: train/valid loss = {:.4f}/{:.4f} ' +
                        'train/valid score = {:.4f}/{:.4f} ' +

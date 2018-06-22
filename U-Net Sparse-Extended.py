@@ -10,6 +10,7 @@ import skimage.morphology          # For using image labeling
 import matplotlib.pyplot as plt    # Python 2D plotting library
 import matplotlib.cm as cm         # Color map
 import utils
+from loss import categorical_cross_entropy, soft_dice
 from tqdm import tqdm
 from NeuralNetworks import U_Net
 
@@ -19,15 +20,16 @@ IMG_WIDTH = 256        # Default image width
 IMG_HEIGHT = 256       # Default image height
 IMG_CHANNELS = 3       # Default number of channels
 NET_TYPE = 'Xception_InceptionSE'  # Network to use
-nn_name = 'unet_xception_256crops_wdice+bce'
+nn_name = 'unet_xception_256crops_dice+bce'
 USE_WEIGHTS = False    # For weighted bce
-METHOD = None   # Either crop or resize
+METHOD = 'resize'   # Either crop or resize
+MULTI_HEAD = False
 
 # %%####################### DIRS #########################
-TRAIN_DIR = os.path.join(os.getcwd(), 'stage1_train')
+#TRAIN_DIR = os.path.join(os.getcwd(), 'stage1_train')
 TEST_DIR = os.path.join(os.getcwd(), 'stage2_final_test')
 VAL_DIR = os.path.join(os.getcwd(), 'stage1_test')
-# TRAIN_DIR = os.path.join(os.getcwd(), 'External datasets/external_data/train')
+TRAIN_DIR = os.path.join(os.getcwd(), 'External datasets/external_data/train')
 # TEST_DIR = os.path.join(os.getcwd(), 'External datasets/external_data/test')
 IMG_TYPE = '.png'         # Image type
 DIR_DICT = dict(logs='logs', saves='saves')
@@ -49,14 +51,14 @@ y_test_pred = {}
 LEARN_RATE_0 = 0.01
 LEARN_RATE_ALPHA = 0.25
 LEARN_RATE_STEP = 3
-N_EPOCH = 20
+N_EPOCH = 50
 MB_SIZE = 10
 USE_BN = False
 USE_DROP = False
 KEEP_PROB = 0.8
 ACTIVATION = 'selu'
 PADDING = 'SYMMETRIC'
-LOSS = 'wdice+ce+entropy_penalty'
+LOSS = [[categorical_cross_entropy(), soft_dice(is_onehot=False)]]
 
 # %%###########################################################################
 ############################## LOADING DATASETS ###############################
@@ -97,7 +99,7 @@ test_sizes = [(h, w) for h, w in zip(
 # #############################################################################
 PRETRAIN_WEIGHTS = False
 # Implement cross validations
-cv_num = 10
+cv_num = 50
 kfold = sklearn.model_selection.KFold(
     cv_num, shuffle=True, random_state=SEED)
 
@@ -119,6 +121,7 @@ for i, (train_index, valid_index) in enumerate(kfold.split(x_train)):
             u_net = U_Net(nn_name=nn_name, mb_size=MB_SIZE, log_step=1.0,
                           input_shape=(IMG_WIDTH, IMG_HEIGHT, IMG_CHANNELS),
                           output_shape=(IMG_WIDTH, IMG_HEIGHT, 1),
+                          multi_head=MULTI_HEAD,
                           learn_rate_0=LEARN_RATE_0,
                           learn_rate_alpha=LEARN_RATE_ALPHA,
                           learn_rate_step=LEARN_RATE_STEP,
