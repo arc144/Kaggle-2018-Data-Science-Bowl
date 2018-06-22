@@ -230,6 +230,64 @@ def load_images_masks(x_paths, y_paths):
     return np.array(imgs), np.array(masks)
 
 
+def load_images(paths, tgt_size=None, color_mode=cv2.IMREAD_COLOR,
+                method='resize',
+                check_compatibility=False,
+                compatibility_multiplier=32):
+    '''Wrapper for loading images'''
+    ret = []
+    for path in paths:
+        if method == 'resize':
+            ret.append(read_image(path,
+                                  color_mode=color_mode,
+                                  target_size=tgt_size,
+                                  method=method))
+
+        elif method is None:
+            ret.append(read_image(
+                path,
+                color_mode=color_mode,
+                target_size=None,
+                method=method,
+                check_compatibility=check_compatibility,
+                compatibility_multiplier=compatibility_multiplier))
+
+    ret = np.array(ret)
+
+    if len(ret.shape) == 3:
+        ret = np.expand_dims(ret, axis=-1)
+
+    ret = normalize(ret, type_=0)
+
+    return ret
+
+
+def load_masks(paths, tgt_size=None,
+               method='resize'):
+    '''Wrapper for loading masks'''
+    ret = []
+    for path in paths:
+        if method == 'resize':
+            ret.append(read_mask(path,
+                                 target_size=tgt_size,
+                                 method=method))
+
+        elif method is None:
+            ret.append(read_mask(
+                path,
+                target_size=None,
+                method=method))
+
+    ret = np.array(ret)
+
+    if len(ret.shape) == 3:
+        ret = np.expand_dims(ret, axis=-1)
+
+    ret = normalize(ret, type_=0)
+
+    return ret
+
+
 def generate_images_masks(x_paths, y_paths, color_mode=cv2.IMREAD_COLOR,
                           tgt_size=None, method='resize',
                           seeds=None):
@@ -602,6 +660,20 @@ def resize_as_original(y_test_pred, test_sizes):
             res_mask = np.squeeze(y_test_pred[i])
         y_test_pred_original_size.append(res_mask)
     return np.array(y_test_pred_original_size)
+
+
+def postprocessing(pred, borders_head, method='watershed'):
+    '''Apply postprocessing to predictions'''
+    print('oi')
+    full_mask = trsf_proba_to_binary(pred)
+    borderless_mask = trsf_proba_to_binary(borders_head[:, :, :, 1])
+    borders = trsf_proba_to_binary(borders_head[:, :, :, 2])
+
+    markers = borderless_mask * (1 - borders)
+    water = watershed(full_mask, markers=markers,
+                      mask=full_mask, watershed_line=False)
+    return water
+
 
 # Collection of methods for run length encoding.
 # For example, '1 3 10 5' implies pixels 1,2,3,10,11,12,13,14 are to be included

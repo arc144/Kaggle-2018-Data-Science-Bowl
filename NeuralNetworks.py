@@ -586,6 +586,38 @@ class U_Net(ConvNetwork_ABC):
         self.training_tf = graph.get_tensor_by_name("training_tf:0")
         self.extra_update_ops_tf = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
 
+    def load_parameters(self, filename):
+        '''Load helper and tunable parameters.'''
+        filepath = os.path.join(
+            os.getcwd(), self.dir_dict['saves'], filename + '_params.npy')
+        self.params = np.load(filepath).item()  # load parameters of network
+
+        self.nn_name = filename
+        self.learn_rate = self.params['learn_rate']
+        self.learn_rate_0 = self.params['learn_rate_0']
+        self.learn_rate_step = self.params['learn_rate_step']
+        self.learn_rate_alpha = self.params['learn_rate_alpha']
+        self.learn_rate_pos = self.params['learn_rate_pos']
+        self.keep_prob = self.params['keep_prob']
+        self.epoch = self.params['epoch']
+        self.n_log_step = self.params['n_log_step']
+        self.log_step = self.params['log_step']
+        self.input_shape = self.params['input_shape']
+        self.output_shape = self.params['output_shape']
+        self.mb_size = self.params['mb_size']
+        self.dropout_proba = self.params['dropout_proba']
+        self.multi_head = self.params['multi_head']
+
+        print('Parameters of the loaded neural network')
+        print('\tnn_name = {}, epoch = {:.2f}, mb_size = {}'.format(
+            self.nn_name, self.epoch, self.mb_size))
+        print('\tinput_shape = {}, output_shape = {}'.format(
+            self.input_shape, self.output_shape))
+        print('\tlearn_rate = {:.10f}, learn_rate_0 = {:.10f}, dropout_proba = {}'.format(
+            self.learn_rate, self.learn_rate_0, self.dropout_proba))
+        print('\tlearn_rate_step = {}, learn_rate_pos = {}, learn_rate_alpha = {}'.format(
+            self.learn_rate_step, self.learn_rate_pos, self.learn_rate_alpha))
+
     def optimizer_tensor(self):
         """Optimization tensor."""
         # Adam Optimizer (adaptive moment estimation).
@@ -633,14 +665,16 @@ class U_Net(ConvNetwork_ABC):
 
         return x_tr, y_tr, None
 
-    def get_score(self, pred, y, from_paths=False, tgt_size=None, method=None):
+    def get_score(self, pred, y, from_paths=False, tgt_size=None, post_processing=False, method=None):
         '''Reimplement this function and return the score'''
         # for i in range(len(pred)):
         #     pred[i] = pred[i] / pred[i].max()
         if from_paths:
             y = utils.load_masks(y, tgt_size=tgt_size, method=method)
         pred = utils.trsf_proba_to_binary(pred)
-        return score.get_score(y, pred)
+        s = score.get_score(y, pred, label_pred=(
+            self.multi_head and post_processing))
+        return s
 
     def get_IoU(self, pred, y):
         for i in range(len(pred)):
@@ -653,10 +687,12 @@ class U_Net(ConvNetwork_ABC):
         union = np.sum(np.maximum(pred, y))
         return intersection / union
 
-    def get_prediction(self, sess, x_data, from_paths=False,
+    def get_prediction(self, sess, x_data,
+                       from_paths=False,
                        check_compatibility=False,
                        compatibility_multiplier=32,
                        tgt_size=None, method=None,
+                       post_processing=False,
                        keep_prob=1.0):
         """ Prediction of the neural network graph. """
         # Load images if needed
@@ -683,6 +719,12 @@ class U_Net(ConvNetwork_ABC):
                                        self.keep_prob_tf: keep_prob})
             if pred.shape[-1] == 2:
                 pred = pred[:, :, :, 1]
+
+        if post_processing and self.multi_head:
+            borders = sess.run(tf.nn.softmax(self.borders_logits_tf),
+                               feed_dict={self.x_tf: x_data,
+                                          self.keep_prob_tf: keep_prob})
+            pred = utils.postprocessing(pred, borders, method='watershed')
 
         return pred
 

@@ -115,11 +115,14 @@ def get_iou(y_true_labeled, y_pred_labeled):
     return params
 
 
-def get_score_summary(y_true, y_pred):
+def get_score_summary(y_true, y_pred, label_pred=True):
     """Compute the score for a single sample including a detailed summary."""
 
     y_true_labeled = get_labeled_mask(y_true)
-    y_pred_labeled = get_labeled_mask(y_pred)
+    if label_pred:
+        y_pred_labeled = get_labeled_mask(y_pred)
+    else:
+        y_pred_labeled = y_pred
 
     params = get_iou(y_true_labeled, y_pred_labeled)
     iou = params['iou']
@@ -155,11 +158,11 @@ def get_score_summary(y_true, y_pred):
     return score, params_dict
 
 
-def get_score(y_true, y_pred):
+def get_score(y_true, y_pred, label_pred=True):
     """Compute the score for a batch of samples."""
     scores = []
     for i in range(len(y_true)):
-        score, _ = get_score_summary(y_true[i], y_pred[i])
+        score, _ = get_score_summary(y_true[i], y_pred[i], label_pred)
         scores.append(score)
     return np.array(scores)
 

@@ -19,17 +19,18 @@ from NeuralNetworks import U_Net
 IMG_WIDTH = 256        # Default image width
 IMG_HEIGHT = 256       # Default image height
 IMG_CHANNELS = 3       # Default number of channels
-NET_TYPE = 'Xception_InceptionSE'  # Network to use
-nn_name = 'unet_xception_256crops_dice+bce'
+NET_TYPE = 'vanilla'  # Network to use
+nn_name = 'unet_vanilla_V1_Noaug_dice+bce_multihead'
 USE_WEIGHTS = False    # For weighted bce
 METHOD = 'resize'   # Either crop or resize
 MULTI_HEAD = True
+POST_PROCESSING = True
 
 # %%####################### DIRS #########################
-#TRAIN_DIR = os.path.join(os.getcwd(), 'stage1_train')
+TRAIN_DIR = os.path.join(os.getcwd(), 'stage1_train')
 TEST_DIR = os.path.join(os.getcwd(), 'stage2_final_test')
 VAL_DIR = os.path.join(os.getcwd(), 'stage1_test')
-TRAIN_DIR = os.path.join(os.getcwd(), 'External datasets/external_data/train')
+#TRAIN_DIR = os.path.join(os.getcwd(), 'External datasets/external_data/train')
 # TEST_DIR = os.path.join(os.getcwd(), 'External datasets/external_data/test')
 IMG_TYPE = '.png'         # Image type
 DIR_DICT = dict(logs='logs', saves='saves')
@@ -48,16 +49,15 @@ y_test_pred = {}
 # %%###########################################################################
 ########################### HYPERPARAMETERS ###################################
 ###############################################################################
-LEARN_RATE_0 = 0.01
+LEARN_RATE_0 = 0.001
 LEARN_RATE_ALPHA = 0.25
 LEARN_RATE_STEP = 3
 N_EPOCH = 20
 MB_SIZE = 10
-USE_BN = False
-USE_DROP = False
 KEEP_PROB = 0.8
 ACTIVATION = 'selu'
 PADDING = 'SYMMETRIC'
+AUGMENTATION = False
 LOSS = [[categorical_cross_entropy(), soft_dice(is_onehot=False)],
         [categorical_cross_entropy(onehot_convert=False), soft_dice(is_onehot=True)]]
 
@@ -100,7 +100,7 @@ test_sizes = [(h, w) for h, w in zip(
 # #############################################################################
 PRETRAIN_WEIGHTS = False
 # Implement cross validations
-cv_num = 50
+cv_num = 10
 kfold = sklearn.model_selection.KFold(
     cv_num, shuffle=True, random_state=SEED)
 
@@ -129,7 +129,6 @@ for i, (train_index, valid_index) in enumerate(kfold.split(x_train)):
                           activation_fun=ACTIVATION,
                           padding=PADDING,
                           loss=LOSS,
-                          use_bn=USE_BN, use_drop=USE_DROP,
                           use_weights=USE_WEIGHTS,
                           net_type=NET_TYPE,
                           dir_dict=DIR_DICT,
@@ -142,31 +141,32 @@ for i, (train_index, valid_index) in enumerate(kfold.split(x_train)):
                 u_net.attach_summary(sess)  # Attach summaries.
                 # Variable initialization.
                 sess.run(tf.global_variables_initializer())
-                u_net.load_pretrained_weights(sess)
+                if NET_TYPE != 'vanilla':
+                    u_net.load_pretrained_weights(sess)
 
-#                # Training on original data.
-                u_net.train_graph(sess,
-                                  x_train=x_trn, y_train=y_trn,
-                                  x_valid=x_vld, y_valid=y_vld,
-                                  n_epoch=1.,
-                                  train_profille='top',
-                                  method='resize',
-                                  )
-               # Training on augmented data.
-                u_net.train_graph(sess,
-                                  x_train=x_trn, y_train=y_trn,
-                                  x_valid=x_vld, y_valid=y_vld,
-                                  n_epoch=10,
-                                  train_on_augmented_data=True,
-                                  train_profille='top',
-                                  method='resize',
-                                  )
+    #                # Training on original data.
+                    u_net.train_graph(sess,
+                                      x_train=x_trn, y_train=y_trn,
+                                      x_valid=x_vld, y_valid=y_vld,
+                                      n_epoch=1.,
+                                      train_profille='top',
+                                      method='resize',
+                                      )
+                   # Training on augmented data.
+                    u_net.train_graph(sess,
+                                      x_train=x_trn, y_train=y_trn,
+                                      x_valid=x_vld, y_valid=y_vld,
+                                      n_epoch=10,
+                                      train_on_augmented_data=AUGMENTATION,
+                                      train_profille='top',
+                                      method='resize',
+                                      )
                 #                u_net.learn_rate_alpha = 0.15
                 u_net.train_graph(sess,
                                   x_train=x_trn, y_train=y_trn,
                                   x_valid=x_vld, y_valid=y_vld,
                                   n_epoch=N_EPOCH,
-                                  train_on_augmented_data=True,
+                                  train_on_augmented_data=AUGMENTATION,
                                   # lr = 0.0001,
                                   train_profille='all',
                                   method='resize',
@@ -264,15 +264,18 @@ sess = u_net.load_session_from_file(nn_name)
 
 # Overall score on validation set.
 y_valid_pred_proba = u_net.get_prediction(
-    sess, x_vld, from_paths=True, method=METHOD, tgt_size=(IMG_HEIGHT, IMG_WIDTH))
-# for i in range(len(y_valid_pred_proba)):
-# y_valid_pred_proba[i] = y_valid_pred_proba[i] /
-# y_valid_pred_proba[i].max()
-y_valid_pred = utils.trsf_proba_to_binary(
-    y_valid_pred_proba, threshold=0.5)
+    sess, x_vld, from_paths=True, method=METHOD, tgt_size=(IMG_HEIGHT, IMG_WIDTH),
+    post_processing=POST_PROCESSING)
+
+if not POST_PROCESSING:
+    y_valid_pred = utils.trsf_proba_to_binary(
+        y_valid_pred_proba, threshold=0.5)
+
 valid_score = u_net.get_score(
     y_valid_pred_proba, y_vld, from_paths=True,
-    method=METHOD, tgt_size=(IMG_HEIGHT, IMG_WIDTH))
+    method=METHOD, tgt_size=(IMG_HEIGHT, IMG_WIDTH),
+    post_processing=POST_PROCESSING)
+
 tmp = np.concatenate([np.arange(len(valid_index)).reshape(-1, 1),
                       valid_index.reshape(-1, 1),
                       valid_score.reshape(-1, 1)], axis=1)
@@ -324,9 +327,12 @@ for j in tqdm(range(0, count * inference_batch, inference_batch)):
         method=METHOD,
         tgt_size=(IMG_HEIGHT, IMG_WIDTH),
         check_compatibility=True,
-        compatibility_multiplier=32)
+        compatibility_multiplier=32,
+        post_processing=POST_PROCESSING)
 
-    y_test_pred = utils.trsf_proba_to_binary(y_test_pred)
+    if not POST_PROCESSING:
+        y_test_pred = utils.trsf_proba_to_binary(y_test_pred)
+
     y_test_pred = utils.resize_as_original(
         y_test_pred, sizes)
     y_test_pred, rle_id = utils.mask_to_rle_wrapper(
@@ -335,7 +341,7 @@ for j in tqdm(range(0, count * inference_batch, inference_batch)):
     test_pred_rle.extend(y_test_pred)
     test_pred_ids.extend(rle_id)
 
-    if j == 1500:
+    if METHOD is None and j == 1500:
         # Create submission file, save to disk and release some memory
         sub = pd.DataFrame()
         sub['ImageId'] = test_pred_ids
@@ -356,7 +362,8 @@ if rest:
         method=METHOD,
         tgt_size=(IMG_HEIGHT, IMG_WIDTH),
         check_compatibility=True,
-        compatibility_multiplier=32)
+        compatibility_multiplier=32,
+        post_processing=True)
 
     y_test_pred = utils.trsf_proba_to_binary(y_test_pred)
     y_test_pred = utils.resize_as_original(
@@ -382,7 +389,7 @@ print('test_pred_rle.shape = {}'.format(np.array(test_pred_rle).shape))
 
 # Inspect a test prediction and check run length encoding.
 # n = np.random.randint(len(x_test))
-n = 1
+n = 143
 pred = u_net.get_prediction(
     sess, [x_test[n]],
     from_paths=True,
@@ -404,9 +411,9 @@ axs[0, 0].imshow(utils.read_image(test_df['image_path'].loc[n]))
 axs[0, 0].set_title('{}.) original test image'.format(n))
 axs[0, 1].imshow(np.squeeze((utils.read_image(x_test[n]))))
 axs[0, 1].set_title('{}.) transformed test image'.format(n))
-axs[0, 2].imshow(np.squeeze(y_test_pred_proba[n]), cm.gray)
+axs[0, 2].imshow(np.squeeze(pred), cm.gray)
 axs[0, 2].set_title('{}.) predicted test mask probabilities'.format(n))
-axs[1, 0].imshow(np.squeeze(y_test_pred_proba[n]), cm.gray)
+axs[1, 0].imshow(np.squeeze(y_test_pred), cm.gray)
 axs[1, 0].set_title('{}.) predicted test mask'.format(n))
 axs[1, 1].imshow(np.squeeze(y_test_pred_original_size), cm.gray)
 axs[1, 1].set_title(

@@ -7,7 +7,8 @@ import cv2
 import os
 from tqdm import tqdm
 
-TRAIN_DIR = os.path.join(os.getcwd(), 'External datasets/external_data/train')
+# TRAIN_DIR = os.path.join(os.getcwd(), 'External datasets/external_data/train')
+TRAIN_DIR = os.path.join(os.getcwd(), 'stage1_train')
 IMG_DIR_NAME = 'images'   # Folder name including the image
 MASK_DIR_NAME = 'masks'   # Folder name including the masks
 IMG_TYPE = '.png'
@@ -18,7 +19,7 @@ train_df = utils.read_train_data_properties(TRAIN_DIR,
 x_train, y_train = train_df['image_path'].values, train_df['mask_dir'].values
 
 # Decide which run it is
-run = 10
+run = 7
 n = 10
 chunk, rest = divmod(len(x_train), n)
 
@@ -33,6 +34,9 @@ x_loaded, y_loaded = utils.generate_images_masks(
     y,
     method=method, tgt_size=tgt_size)
 
+for i in tqdm(range(len(x_loaded))):
+    np.save(x[i] + 'img.npy', x_loaded[i])
+    np.save(y[i] + 'mask.npy', y_loaded[i])
 # x_loaded, y_loaded = utils.load_images_masks(x, y)
 
 # import matplotlib.pyplot as plt
