@@ -314,7 +314,7 @@ for j in tqdm(range(0, count * inference_batch, inference_batch)):
     ids = test_ids[j:j + inference_batch]
     data = x_test[j:j + inference_batch]
     sizes = test_sizes[j:j + inference_batch]
-    y_test_pred_proba = u_net.get_prediction(
+    y_test_pred = u_net.get_prediction(
         sess, data,
         from_paths=True,
         method=METHOD,
@@ -322,12 +322,13 @@ for j in tqdm(range(0, count * inference_batch, inference_batch)):
         check_compatibility=True,
         compatibility_multiplier=32)
 
-    y_test_pred = utils.trsf_proba_to_binary(y_test_pred_proba)
-    y_test_pred_original_size = utils.resize_as_original(
-        y_test_pred, test_sizes)
-    rle, rle_id = utils.mask_to_rle_wrapper(y_test_pred_original_size, ids,
-                                            min_object_size=MIN_OBJECT_SIZE)
-    test_pred_rle.extend(rle)
+    y_test_pred = utils.trsf_proba_to_binary(y_test_pred)
+    y_test_pred = utils.resize_as_original(
+        y_test_pred, sizes)
+    y_test_pred, rle_id = utils.mask_to_rle_wrapper(
+        y_test_pred, ids,
+        min_object_size=MIN_OBJECT_SIZE)
+    test_pred_rle.extend(y_test_pred)
     test_pred_ids.extend(rle_id)
 
     if j == 1500:
@@ -345,7 +346,7 @@ if rest:
     ids = test_ids[-rest:]
     data = x_test[-rest:]
     sizes = test_sizes[-rest:]
-    pred = u_net.get_prediction(
+    y_test_pred = u_net.get_prediction(
         sess, data,
         from_paths=True,
         method=METHOD,
@@ -353,13 +354,13 @@ if rest:
         check_compatibility=True,
         compatibility_multiplier=32)
 
-    y_test_pred_proba = pred
-    y_test_pred = utils.trsf_proba_to_binary(y_test_pred_proba)
-    y_test_pred_original_size = utils.resize_as_original(
-        y_test_pred, test_sizes)
-    rle, ids = utils.mask_to_rle_wrapper(y_test_pred_original_size, ids,
-                                         min_object_size=MIN_OBJECT_SIZE)
-    test_pred_rle.extend(rle)
+    y_test_pred = utils.trsf_proba_to_binary(y_test_pred)
+    y_test_pred = utils.resize_as_original(
+        y_test_pred, sizes)
+    y_test_pred, ids = utils.mask_to_rle_wrapper(
+        y_test_pred, ids,
+        min_object_size=MIN_OBJECT_SIZE)
+    test_pred_rle.extend(y_test_pred)
     test_pred_ids.extend(ids)
 
     # Create submission file
