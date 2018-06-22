@@ -23,7 +23,7 @@ NET_TYPE = 'Xception_InceptionSE'  # Network to use
 nn_name = 'unet_xception_256crops_dice+bce'
 USE_WEIGHTS = False    # For weighted bce
 METHOD = 'resize'   # Either crop or resize
-MULTI_HEAD = False
+MULTI_HEAD = True
 
 # %%####################### DIRS #########################
 #TRAIN_DIR = os.path.join(os.getcwd(), 'stage1_train')
@@ -51,14 +51,15 @@ y_test_pred = {}
 LEARN_RATE_0 = 0.01
 LEARN_RATE_ALPHA = 0.25
 LEARN_RATE_STEP = 3
-N_EPOCH = 50
+N_EPOCH = 20
 MB_SIZE = 10
 USE_BN = False
 USE_DROP = False
 KEEP_PROB = 0.8
 ACTIVATION = 'selu'
 PADDING = 'SYMMETRIC'
-LOSS = [[categorical_cross_entropy(), soft_dice(is_onehot=False)]]
+LOSS = [[categorical_cross_entropy(), soft_dice(is_onehot=False)],
+        [categorical_cross_entropy(onehot_convert=False), soft_dice(is_onehot=True)]]
 
 # %%###########################################################################
 ############################## LOADING DATASETS ###############################
@@ -155,7 +156,7 @@ for i, (train_index, valid_index) in enumerate(kfold.split(x_train)):
                 u_net.train_graph(sess,
                                   x_train=x_trn, y_train=y_trn,
                                   x_valid=x_vld, y_valid=y_vld,
-                                  n_epoch=15,
+                                  n_epoch=10,
                                   train_on_augmented_data=True,
                                   train_profille='top',
                                   method='resize',

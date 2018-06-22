@@ -480,7 +480,7 @@ class U_Net(ConvNetwork_ABC):
             self.full_mask_y_tf = tf.identity(
                 self.y_tf[:, :, :, :1], name='full_mask_y_tf')
             if self.multi_head:
-                self.border_y_tf = tf.identity(
+                self.borders_y_tf = tf.identity(
                     self.y_tf[:, :, :, 1:], name='border_y_tf')
 
             # Weights tensor.
@@ -623,8 +623,7 @@ class U_Net(ConvNetwork_ABC):
         # Original data.
         x_tr, y_tr = utils.load_images_masks(
             self.x_train[self.perm_array[start:end]],
-            self.y_train[self.perm_array[start:end]],
-            method=method, tgt_size=tgt_size)
+            self.y_train[self.perm_array[start:end]])
 
         # Use augmented data.
         if self.train_on_augmented_data:
@@ -780,10 +779,8 @@ class U_Net(ConvNetwork_ABC):
                     ids = np.arange(len(dct['x']))
                     np.random.shuffle(ids)
                     ids = ids[:len(val_dct['x'])]  # len(x_batch)
-                    x = utils.load_images(dct['x'][ids],
-                                          method='resize', tgt_size=tgt_size)
-                    y = utils.load_masks(dct['y'][ids],
-                                         method='resize', tgt_size=tgt_size)
+                    x, y = utils.load_images_masks(
+                        dct['x'][ids], dct['y'][ids])
                     # w = dct['w'][ids]
 
                     dct['feed_dict'] = {self.x_tf: x,

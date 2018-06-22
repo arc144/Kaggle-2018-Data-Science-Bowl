@@ -219,28 +219,39 @@ def load_test_data(test_df, image_size=(256, 256)):
     return x_test
 
 
-def load_images_masks(x_paths, y_paths, color_mode=cv2.IMREAD_COLOR,
-                      tgt_size=None, method='resize',
-                      seeds=None):
+def load_images_masks(x_paths, y_paths):
+    '''Wrapper for load_images and load_masks'''
+    imgs = []
+    masks = []
+    for im_path, mask_path in zip(x_paths, y_paths):
+        imgs.append(np.load(im_path + 'img.npy'))
+        masks.append(np.load(mask_path + 'mask.npy'))
+
+    return np.array(imgs), np.array(masks)
+
+
+def generate_images_masks(x_paths, y_paths, color_mode=cv2.IMREAD_COLOR,
+                          tgt_size=None, method='resize',
+                          seeds=None):
     '''Wrapper for load_images and load_masks'''
     if method == 'random_crop':
-        imgs, seeds = load_images(x_paths, color_mode=color_mode,
-                                  method=method, tgt_size=tgt_size)
+        imgs, seeds = generate_images(x_paths, color_mode=color_mode,
+                                      method=method, tgt_size=tgt_size)
     else:
-        imgs = load_images(x_paths, color_mode=color_mode,
-                           method=method, tgt_size=tgt_size)
+        imgs = generate_images(x_paths, color_mode=color_mode,
+                               method=method, tgt_size=tgt_size)
 
-    masks = load_masks(y_paths,
-                       method=method, tgt_size=tgt_size,
-                       seeds=seeds)
+    masks = generate_masks(y_paths,
+                           method=method, tgt_size=tgt_size,
+                           seeds=seeds)
 
     return imgs, masks
 
 
-def load_images(paths, color_mode=cv2.IMREAD_COLOR,
-                tgt_size=None, method='resize',
-                check_compatibility=False,
-                compatibility_multiplier=32, seed=None):
+def generate_images(paths, color_mode=cv2.IMREAD_COLOR,
+                    tgt_size=None, method='resize',
+                    check_compatibility=False,
+                    compatibility_multiplier=32, seed=None):
     '''Wrapper for read_image multiple times'''
     ret = []
     seeds = []
@@ -290,7 +301,7 @@ def load_images(paths, color_mode=cv2.IMREAD_COLOR,
         return ret
 
 
-def load_masks(paths, tgt_size=None, method='resize', seeds=None):
+def generate_masks(paths, tgt_size=None, method='resize', seeds=None):
     '''Wrapper for read_image multiple times'''
     ret = []
 
@@ -420,30 +431,6 @@ def imgs_to_grayscale(imgs):
     if imgs.shape[3] == 3:
         imgs = normalize_imgs(np.expand_dims(np.mean(imgs, axis=3), axis=3))
     return imgs
-
-
-def generate_images(imgs, seed=None):
-    """Generate new images."""
-    # Transformations.
-    image_generator = keras.preprocessing.image.ImageDataGenerator(
-        rotation_range=90., width_shift_range=0.02, height_shift_range=0.02,
-        zoom_range=0.10, horizontal_flip=True, vertical_flip=True)
-
-    # Generate new set of images
-    imgs = image_generator.flow(imgs, np.zeros(len(imgs)),
-                                batch_size=len(imgs),
-                                shuffle=False, seed=seed).next()
-    return imgs[0]
-
-
-def generate_images_and_masks(imgs, masks, weights=None):
-    """Generate new images and masks."""
-    seed = np.random.randint(10000)
-    imgs = generate_images(imgs, seed=seed)
-    if weights is not None:
-        weights = generate_images(weights, seed=seed)
-    masks = trsf_proba_to_binary(generate_images(masks, seed=seed))
-    return imgs, masks, weights
 
 
 def preprocess_raw_data(x_train, y_train, y_weights,
