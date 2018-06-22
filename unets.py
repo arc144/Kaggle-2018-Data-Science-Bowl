@@ -5,7 +5,7 @@ slim = tf.contrib.slim
 
 
 def vanilla(inputs, is_training=True, activation_fn='relu', padding='SAME',
-            out_shape=2, scope='U-Net'):
+            out_shape=[2], multi_head=False, scope='U-Net'):
     '''Vanilla U-Net archtecture according to the orignal paper'''
     assert padding in ['SAME', 'REFLECT', 'SYMMETRIC']
 
@@ -68,19 +68,25 @@ def vanilla(inputs, is_training=True, activation_fn='relu', padding='SAME',
                                     padding=padding,
                                     block=1)
             with tf.variable_scope('output'):
-                logits = slim.conv2d(net, out_shape, [1, 1],
-                                     stride=1, padding='SAME', scope='conv1x1')
-                predictions = slim.softmax(logits, scope='predictions')
+                full_mask_logits = slim.conv2d(
+                    net, out_shape[0], [1, 1],
+                    stride=1, padding='SAME', scope='conv1x1_full_mask')
+                if multi_head:
+                    borders_logits = slim.conv2d(
+                        net, out_shape[1], [1, 1],
+                        stride=1, padding='SAME', scope='conv1x1_borders')
+                    logits = [full_mask_logits, borders_logits]
+                else:
+                    logits = [full_mask_logits]
 
             end_points = slim.utils.convert_collection_to_dict(
                 end_points_collections)
             end_points['logits'] = logits
-            end_points['predictions'] = predictions
             return logits, end_points
 
 
 def Xception_vanilla(inputs, is_training=True, activation_fn='relu', padding='SAME',
-                     out_shape=2, scope='U-Net'):
+                     out_shape=[2], multi_head=False, scope='U-Net'):
     '''U-net using Xception as encoder
      Reference layers to add to decoder for input size=(256,256):
     bypass1: layer[0],   size=(256x256)
@@ -153,19 +159,25 @@ def Xception_vanilla(inputs, is_training=True, activation_fn='relu', padding='SA
                                     up_padding='SAME',
                                     block=1)
             with tf.variable_scope('output'):
-                logits = slim.conv2d(net, out_shape, [1, 1],
-                                     stride=1, padding='SAME', scope='conv1x1')
-                predictions = slim.softmax(logits, scope='predictions')
+                full_mask_logits = slim.conv2d(
+                    net, out_shape[0], [1, 1],
+                    stride=1, padding='SAME', scope='conv1x1_full_mask')
+                if multi_head:
+                    borders_logits = slim.conv2d(
+                        net, out_shape[1], [1, 1],
+                        stride=1, padding='SAME', scope='conv1x1_borders')
+                    logits = [full_mask_logits, borders_logits]
+                else:
+                    logits = [full_mask_logits]
                 end_points = slim.utils.convert_collection_to_dict(
                     end_points_collections)
                 end_points['logits'] = logits
-                end_points['predictions'] = predictions
 
         return logits, encoder, end_points
 
 
 def Xception_InceptionSE(inputs, is_training=True, activation_fn='relu', padding='SAME',
-                         out_shape=2, scope='U-Net'):
+                         out_shape=[2], multi_head=False, scope='U-Net'):
     '''U-net using Xception as encoder
      Reference layers to add to decoder for input size=(256,256):
     bypass1: layer[0],   size=(256x256)
@@ -205,44 +217,50 @@ def Xception_InceptionSE(inputs, is_training=True, activation_fn='relu', padding
                 net = up_conv_block_v4(net, bypass5, 1024,
                                        upconv_kernel=2,
                                        padding=padding,
-                                       up_padding='VALID',
+                                       up_padding='SAME',
                                        block=5)
                 net = up_conv_block_v4(net, bypass4, 728,
                                        upconv_kernel=2,
                                        padding=padding,
-                                       up_padding='VALID',
+                                       up_padding='SAME',
                                        block=4)
                 net = up_conv_block_v4(net, bypass3, 256,
                                        upconv_kernel=2,
                                        padding=padding,
-                                       up_padding='VALID',
+                                       up_padding='SAME',
                                        block=3)
                 net = up_conv_block_v4(net, bypass2, 128,
                                        upconv_kernel=2,
                                        padding=padding,
-                                       up_padding='VALID',
+                                       up_padding='SAME',
                                        block=2)
                 net = up_conv_block_v3(net, bypass1, 3,
                                        conv_count=1,
                                        conv_kernel=3,
                                        upconv_kernel=2,
                                        padding=padding,
-                                       up_padding='VALID',
+                                       up_padding='SAME',
                                        block=1)
             with tf.variable_scope('output'):
-                logits = slim.conv2d(net, out_shape, [1, 1],
-                                     stride=1, padding='SAME', scope='conv1x1')
-                predictions = slim.softmax(logits, scope='predictions')
+                full_mask_logits = slim.conv2d(
+                    net, out_shape[0], [1, 1],
+                    stride=1, padding='SAME', scope='conv1x1_full_mask')
+                if multi_head:
+                    borders_logits = slim.conv2d(
+                        net, out_shape[1], [1, 1],
+                        stride=1, padding='SAME', scope='conv1x1_borders')
+                    logits = [full_mask_logits, borders_logits]
+                else:
+                    logits = [full_mask_logits]
                 end_points = slim.utils.convert_collection_to_dict(
                     end_points_collections)
                 end_points['logits'] = logits
-                end_points['predictions'] = predictions
 
         return logits, encoder, end_points
 
 
 def SE_Xception_vanillaSE(inputs, is_training=True, activation_fn='relu', padding='SAME',
-                          out_shape=2, scope='U-Net'):
+                          out_shape=[2], multi_head=False, scope='U-Net'):
     '''U-net using SE_Xception as encoder
      Reference layers to add to decoder for input size=(256,256):
     bypass1: layer[0],   size=(256x256)
@@ -315,19 +333,25 @@ def SE_Xception_vanillaSE(inputs, is_training=True, activation_fn='relu', paddin
                                        up_padding='SAME',
                                        block=1)
             with tf.variable_scope('output'):
-                logits = slim.conv2d(net, out_shape, [1, 1],
-                                     stride=1, padding='SAME', scope='conv1x1')
-                predictions = slim.softmax(logits, scope='predictions')
+                full_mask_logits = slim.conv2d(
+                    net, out_shape[0], [1, 1],
+                    stride=1, padding='SAME', scope='conv1x1_full_mask')
+                if multi_head:
+                    borders_logits = slim.conv2d(
+                        net, out_shape[1], [1, 1],
+                        stride=1, padding='SAME', scope='conv1x1_borders')
+                    logits = [full_mask_logits, borders_logits]
+                else:
+                    logits = [full_mask_logits]
                 end_points = slim.utils.convert_collection_to_dict(
                     end_points_collections)
                 end_points['logits'] = logits
-                end_points['predictions'] = predictions
 
         return logits, encoder, end_points
 
 
 def InceptionResNetV2_vanilla(inputs, is_training=True, activation_fn='relu', padding='SAME',
-                              out_shape=2, scope='U-Net'):  # TO DO
+                              out_shape=[2], multi_head=False, scope='U-Net'):  # TO DO
     '''U-net using InceptionResNetV2 as encoder
     Reference layers to add to decoder for input size=(256,256):
     bypass1: layer[0],   size=(256x256)
@@ -400,13 +424,19 @@ def InceptionResNetV2_vanilla(inputs, is_training=True, activation_fn='relu', pa
                                        up_padding='SAME',
                                        block=1)
             with tf.variable_scope('output'):
-                logits = slim.conv2d(net, out_shape, [1, 1],
-                                     stride=1, padding='SAME', scope='conv1x1')
-                predictions = slim.softmax(logits, scope='predictions')
+                full_mask_logits = slim.conv2d(
+                    net, out_shape[0], [1, 1],
+                    stride=1, padding='SAME', scope='conv1x1_full_mask')
+                if multi_head:
+                    borders_logits = slim.conv2d(
+                        net, out_shape[1], [1, 1],
+                        stride=1, padding='SAME', scope='conv1x1_borders')
+                    logits = [full_mask_logits, borders_logits]
+                else:
+                    logits = [full_mask_logits]
                 end_points = slim.utils.convert_collection_to_dict(
                     end_points_collections)
                 end_points['logits'] = logits
-                end_points['predictions'] = predictions
 
         return logits, encoder, end_points
 

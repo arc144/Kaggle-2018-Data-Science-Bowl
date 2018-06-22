@@ -432,10 +432,11 @@ class ConvNetwork_ABC():
 
 class U_Net(ConvNetwork_ABC):
 
-    def __init__(self, *args, loss='ce', net_type='vanilla', ** kwargs):
+    def __init__(self, *args, loss='ce', net_type='vanilla', multi_head=False, ** kwargs):
         super().__init__(*args, **kwargs)
         self.loss = loss
         self.net_type = net_type
+        self.multi_head = multi_head
         self.buffer_x = []
         self.buffer_y = []
 
@@ -464,7 +465,12 @@ class U_Net(ConvNetwork_ABC):
                                                            shape=(),
                                                            name='training_tf')
             # Build U-Net graph.
-            self.logits_tf = tf.identity(self.create_graph(), name='logits_tf')
+            logits = self.create_graph()
+            self.full_mask_logits_tf = tf.identity(
+                logits[0], name='full_mask_logits_tf')
+            if self.multi_head:
+                self.borders_logits_tf = tf.identity(
+                    logits[1], name='borders_logits_tf')
 
             # Target tensor.
             shape = [None, None, None, self.output_shape[-1]]
@@ -480,7 +486,7 @@ class U_Net(ConvNetwork_ABC):
             # Loss tensor
             self.loss_tf = tf.identity(self.loss_tensor(), name='loss_tf')
 
-            # Optimisation tensor.
+            # Optimization tensor.
             self.train_step_all_tf, self.train_step_top_tf = self.optimizer_tensor()
 
             # Extra operations required for batch normalization.
@@ -494,30 +500,40 @@ class U_Net(ConvNetwork_ABC):
             logits, self.end_points = \
                 unets.vanilla(self.x_tf,
                               activation_fn=self.activation_fun,
+                              out_shape=[2, 3],
+                              multi_head=self.multi_head,
                               padding=self.padding)
         else:
             if self.net_type == 'Xception_vanilla':
                 logits, self.encoder, self.end_points = \
                     unets.Xception_vanilla(self.x_tf,
                                            activation_fn=self.activation_fun,
+                                           out_shape=[2, 3],
+                                           multi_head=self.multi_head,
                                            padding=self.padding)
 
             elif self.net_type == 'SE_Xception_vanillaSE':
                 logits, self.encoder, self.end_points = \
                     unets.SE_Xception_vanillaSE(self.x_tf,
                                                 activation_fn=self.activation_fun,
+                                                out_shape=[2, 3],
+                                                multi_head=self.multi_head,
                                                 padding=self.padding)
 
             elif self.net_type == 'Xception_InceptionSE':
                 logits, self.encoder, self.end_points = \
                     unets.Xception_InceptionSE(self.x_tf,
                                                activation_fn=self.activation_fun,
+                                               out_shape=[2, 3],
+                                               multi_head=self.multi_head,
                                                padding=self.padding)
 
             elif self.net_type == 'InceptionResNetV2_vanilla':
                 logits, self.encoder, self.end_points = \
                     unets.InceptionResNetV2(self.x_tf,
                                             activation_fn=self.activation_fun,
+                                            out_shape=[2, 3],
+                                            multi_head=self.multi_head,
                                             padding=self.padding)
 
             self.weights = [w.trainable_weights for w in self.encoder.layers
@@ -534,6 +550,29 @@ class U_Net(ConvNetwork_ABC):
 
         return logits
 
+    def load_tensors(self, graph, update_cost=False):
+        """ Load tensors from a graph. """
+        # Input tensors
+        self.x_tf = graph.get_tensor_by_name("x_tf:0")
+        self.y_tf = graph.get_tensor_by_name("y_tf:0")
+        self.w_tf = graph.get_tensor_by_name("w_tf:0")
+
+        # Tensors for training and prediction.
+        self.learn_rate_tf = graph.get_tensor_by_name("learn_rate_tf:0")
+        self.keep_prob_tf = graph.get_tensor_by_name("keep_prob_tf:0")
+        self.train_step_tf = graph.get_operation_by_name('train_step_tf')
+        self.full_mask_logits_tf = graph.get_tensor_by_name(
+            "full_mask_logits_tf:0")
+        if self.multi_head:
+            self.borders_logits_tf = graph.get_tensor_by_name(
+                "borders_logits_tf:0")
+        if not update_cost:
+            self.loss_tf = graph.get_tensor_by_name('loss_tf:0')
+        else:
+            self.loss_tf = self.loss_tensor()
+        self.training_tf = graph.get_tensor_by_name("training_tf:0")
+        self.extra_update_ops_tf = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
+
     def loss_tensor(self):
         '''Reimplement this function and return the loss'''
         # Softmax
@@ -548,7 +587,7 @@ class U_Net(ConvNetwork_ABC):
                 weights = 1.0
             loss = tf.losses.softmax_cross_entropy(
                 onehot_labels=onehot_labels,
-                logits=self.logits_tf,
+                logits=self.full_mask_logits_tf,
                 weights=weights)
             loss = tf.reduce_mean(loss)
 
@@ -556,8 +595,10 @@ class U_Net(ConvNetwork_ABC):
             # Dice loss based on dice score coefficent.
             axis = np.arange(1, len(self.output_shape) + 1)
             epilson = 1e-5
-            corr = tf.reduce_sum(onehot_labels * self.logits_tf, axis=axis)
-            l2_pred = tf.reduce_sum(tf.square(self.logits_tf), axis=axis)
+            corr = tf.reduce_sum(
+                onehot_labels * self.full_mask_logits_tf, axis=axis)
+            l2_pred = tf.reduce_sum(
+                tf.square(self.full_mask_logits_tf), axis=axis)
             l2_true = tf.reduce_sum(tf.square(onehot_labels), axis=axis)
             dice_coeff = (2. * corr + epilson) / (l2_true + l2_pred + epilson)
             loss = tf.subtract(1., tf.reduce_mean(dice_coeff))
@@ -568,9 +609,11 @@ class U_Net(ConvNetwork_ABC):
             epilson = 1e-5
             total = self.output_shape[0] * self.output_shape[1]
             w = tf.reduce_sum(onehot_labels, axis=axis) / total
-            I = tf.reduce_sum(onehot_labels * self.logits_tf, axis=axis)
+            I = tf.reduce_sum(
+                onehot_labels * self.full_mask_logits_tf, axis=axis)
             balanced_I = I * (1 - w + epilson)
-            l2_pred = tf.reduce_sum(tf.square(self.logits_tf), axis=axis)
+            l2_pred = tf.reduce_sum(
+                tf.square(self.full_mask_logits_tf), axis=axis)
             l2_true = tf.reduce_sum(tf.square(onehot_labels), axis=axis)
             dice_coeff = (2. * balanced_I + epilson) / \
                 (l2_true + l2_pred + epilson)
@@ -585,7 +628,7 @@ class U_Net(ConvNetwork_ABC):
                 weights = 1.0
             loss1 = tf.losses.softmax_cross_entropy(
                 onehot_labels=onehot_labels,
-                logits=self.logits_tf,
+                logits=self.full_mask_logits_tf,
                 weights=weights)
             loss1 = tf.reduce_mean(loss1)
 
@@ -594,9 +637,11 @@ class U_Net(ConvNetwork_ABC):
             epilson = 1e-5
             total = self.output_shape[0] * self.output_shape[1]
             w = tf.reduce_sum(onehot_labels, axis=axis) / total
-            I = tf.reduce_sum(onehot_labels * self.logits_tf, axis=axis)
+            I = tf.reduce_sum(
+                onehot_labels * self.full_mask_logits_tf, axis=axis)
             balanced_I = I * (1 - w + epilson)
-            l2_pred = tf.reduce_sum(tf.square(self.logits_tf), axis=axis)
+            l2_pred = tf.reduce_sum(
+                tf.square(self.full_mask_logits_tf), axis=axis)
             l2_true = tf.reduce_sum(tf.square(onehot_labels), axis=axis)
             dice_coeff = (2. * balanced_I + epilson) / \
                 (l2_true + l2_pred + epilson)
@@ -610,15 +655,16 @@ class U_Net(ConvNetwork_ABC):
             # ce
             loss0 = tf.losses.softmax_cross_entropy(
                 onehot_labels=onehot_labels,
-                logits=self.logits_tf)
+                logits=self.full_mask_logits_tf)
             loss0 = tf.reduce_mean(loss0)
             # entropy penalty
-            prob = tf.nn.softmax(self.logits_tf) * onehot_labels
+            prob = tf.nn.softmax(self.full_mask_logits_tf) * onehot_labels
             entropy = - prob * tf.log(prob + epilson) / tf.log(10.)
             loss1 = tf.reduce_mean(beta * entropy)
 
             # Soft dice loss
-            logits_tf = tf.expand_dims(self.logits_tf[:, :, :, 1], axis=-1)
+            logits_tf = tf.expand_dims(
+                self.full_mask_logits_tf[:, :, :, 1], axis=-1)
             axis = [1, 2]
             total = self.output_shape[0] * self.output_shape[1]
             w = tf.reduce_sum(self.y_tf, axis=axis) / total
@@ -636,7 +682,7 @@ class U_Net(ConvNetwork_ABC):
             gamma = 2
             epilson = 1e-5
 
-            ce = tf.nn.softmax_cross_entropy_with_logits(logits=self.logits_tf,
+            ce = tf.nn.softmax_cross_entropy_with_logits(logits=self.full_mask_logits_tf,
                                                          labels=self.y_tf)
             probt = tf.exp(-ce)
             loss = tf.pow((1 - probt), gamma) * ce
@@ -741,14 +787,14 @@ class U_Net(ConvNetwork_ABC):
             pred = []
             for x in x_data:
                 pred.append(
-                    sess.run(tf.nn.softmax(self.logits_tf),
+                    sess.run(tf.nn.softmax(self.full_mask_logits_tf),
                              feed_dict={self.x_tf: np.expand_dims(x, axis=0),
                                         self.keep_prob_tf: keep_prob}))
                 if pred[-1].shape[-1] == 2:
                     pred[-1] = pred[-1][:, :, :, 1]
         # Do it for all the batch
         else:
-            pred = sess.run(tf.nn.softmax(self.logits_tf),
+            pred = sess.run(tf.nn.softmax(self.full_mask_logits_tf),
                             feed_dict={self.x_tf: x_data,
                                        self.keep_prob_tf: keep_prob})
             if pred.shape[-1] == 2:
