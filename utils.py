@@ -664,15 +664,17 @@ def resize_as_original(y_test_pred, test_sizes):
 
 def postprocessing(pred, borders_head, method='watershed'):
     '''Apply postprocessing to predictions'''
-    print('oi')
+    pred = pred[:, :, :, 1]
     full_mask = trsf_proba_to_binary(pred)
     borderless_mask = trsf_proba_to_binary(borders_head[:, :, :, 1])
     borders = trsf_proba_to_binary(borders_head[:, :, :, 2])
 
-    markers = borderless_mask * (1 - borders)
-    water = watershed(full_mask, markers=markers,
-                      mask=full_mask, watershed_line=False)
-    return water
+    water = []
+    for i in range(len(pred)):
+        markers = label(borderless_mask[i] * (1 - borders[i]))[0]
+        water.append(watershed(full_mask[i], markers=markers,
+                               mask=full_mask[i], watershed_line=False))
+    return np.array(water)
 
 
 # Collection of methods for run length encoding.
@@ -694,10 +696,13 @@ def rle_of_binary(x):
     return run_lengths
 
 
-def mask_to_rle(mask, cutoff=.5, min_object_size=20):
+def mask_to_rle(mask, cutoff=.5, post_processed=False, min_object_size=20):
     """ Return run length encoding of mask. """
     # segment image and label different objects
-    lab_mask = skimage.morphology.label(mask > cutoff)
+    if not post_processed:
+        lab_mask = skimage.morphology.label(mask > cutoff)
+    else:
+        lab_mask = mask
 
     # Keep only objects that are large enough.
     (mask_labels, mask_sizes) = np.unique(lab_mask, return_counts=True)
@@ -723,13 +728,17 @@ def rle_to_mask(rle, img_shape):
 
 
 def mask_to_rle_wrapper(y_test_pred_original_size, test_ids,
-                        min_object_size=20):
+                        post_processed=False, min_object_size=20):
     # Run length encoding of predicted test masks.
     test_pred_rle = []
     test_pred_ids = []
     for n, id_ in enumerate(test_ids):
         rle = list(mask_to_rle(
-            y_test_pred_original_size[n], min_object_size=min_object_size))
+            y_test_pred_original_size[n],
+            post_processed=post_processed,
+            min_object_size=min_object_size))
+        if len(rle) == 0:
+            rle = [[]]
         test_pred_rle.extend(rle)
         test_pred_ids.extend([id_] * len(rle))
     return test_pred_rle, test_pred_ids

@@ -576,7 +576,7 @@ class U_Net(ConvNetwork_ABC):
         self.full_mask_logits_tf = graph.get_tensor_by_name(
             "full_mask_logits_tf:0")
         if self.multi_head:
-            self.borders_y_tf = graph.get_tensor_by_name("borders_y_tf:0")
+            self.borders_y_tf = graph.get_tensor_by_name("border_y_tf:0")
             self.borders_logits_tf = graph.get_tensor_by_name(
                 "borders_logits_tf:0")
         if not update_cost:
@@ -671,20 +671,19 @@ class U_Net(ConvNetwork_ABC):
         #     pred[i] = pred[i] / pred[i].max()
         if from_paths:
             y = utils.load_masks(y, tgt_size=tgt_size, method=method)
-        pred = utils.trsf_proba_to_binary(pred)
+        if not post_processing:
+            pred = utils.trsf_proba_to_binary(pred)
         s = score.get_score(y, pred, label_pred=(
             self.multi_head and post_processing))
         return s
 
     def get_IoU(self, pred, y):
-        for i in range(len(pred)):
-            pred[i] = pred[i] / pred[i].max()
         pred = utils.trsf_proba_to_binary(pred)
-        if len(pred.shape) == 3:
-            y = np.squeeze(y)
+        if len(pred.shape) > 3:
+            pred = np.squeeze(pred)
 
         intersection = np.sum(pred * y)
-        union = np.sum(np.maximum(pred, y))
+        union = np.sum(pred + y)
         return intersection / union
 
     def get_prediction(self, sess, x_data,
@@ -693,6 +692,7 @@ class U_Net(ConvNetwork_ABC):
                        compatibility_multiplier=32,
                        tgt_size=None, method=None,
                        post_processing=False,
+                       full_prediction=False,
                        keep_prob=1.0):
         """ Prediction of the neural network graph. """
         # Load images if needed
@@ -710,21 +710,26 @@ class U_Net(ConvNetwork_ABC):
                     sess.run(tf.nn.softmax(self.full_mask_logits_tf),
                              feed_dict={self.x_tf: np.expand_dims(x, axis=0),
                                         self.keep_prob_tf: keep_prob}))
-                if pred[-1].shape[-1] == 2:
-                    pred[-1] = pred[-1][:, :, :, 1]
+                # if pred[-1].shape[-1] == 2:
+                #     pred[-1] = pred[-1][:, :, :, 1]
         # Do it for all the batch
         else:
             pred = sess.run(tf.nn.softmax(self.full_mask_logits_tf),
                             feed_dict={self.x_tf: x_data,
                                        self.keep_prob_tf: keep_prob})
-            if pred.shape[-1] == 2:
-                pred = pred[:, :, :, 1]
 
-        if post_processing and self.multi_head:
+        if self.multi_head and (post_processing or full_prediction):
             borders = sess.run(tf.nn.softmax(self.borders_logits_tf),
                                feed_dict={self.x_tf: x_data,
                                           self.keep_prob_tf: keep_prob})
-            pred = utils.postprocessing(pred, borders, method='watershed')
+            if post_processing:
+                pred = utils.postprocessing(pred, borders, method='watershed')
+            else:
+                pred = np.concatenate(
+                    [pred[:, :, :, 1:], borders[:, :, :, 1:]], -1)
+
+        else:
+            pred = pred[:, :, :, 1]
 
         return pred
 
@@ -877,6 +882,7 @@ class U_Net(ConvNetwork_ABC):
         self.params['output_shape'] = self.output_shape
         self.params['mb_size'] = self.mb_size
         self.params['dropout_proba'] = self.dropout_proba
+        self.params['multi_head'] = self.multi_head
 
         print('Training ended. Running time: {}'.format(
             datetime.datetime.now() - start))

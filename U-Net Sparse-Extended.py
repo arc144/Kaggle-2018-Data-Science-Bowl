@@ -20,7 +20,7 @@ IMG_WIDTH = 256        # Default image width
 IMG_HEIGHT = 256       # Default image height
 IMG_CHANNELS = 3       # Default number of channels
 NET_TYPE = 'vanilla'  # Network to use
-nn_name = 'unet_vanilla_V1_Noaug_dice+bce_multihead'
+nn_name = 'unet_vanilla_V1_Saug_dice+bce_multihead'
 USE_WEIGHTS = False    # For weighted bce
 METHOD = 'resize'   # Either crop or resize
 MULTI_HEAD = True
@@ -49,15 +49,15 @@ y_test_pred = {}
 # %%###########################################################################
 ########################### HYPERPARAMETERS ###################################
 ###############################################################################
-LEARN_RATE_0 = 0.001
+LEARN_RATE_0 = 0.01
 LEARN_RATE_ALPHA = 0.25
 LEARN_RATE_STEP = 3
-N_EPOCH = 20
+N_EPOCH = 40
 MB_SIZE = 10
 KEEP_PROB = 0.8
 ACTIVATION = 'selu'
 PADDING = 'SYMMETRIC'
-AUGMENTATION = False
+AUGMENTATION = True
 LOSS = [[categorical_cross_entropy(), soft_dice(is_onehot=False)],
         [categorical_cross_entropy(onehot_convert=False), soft_dice(is_onehot=True)]]
 
@@ -205,14 +205,14 @@ sess = u_net.load_session_from_file(nn_name)
 sess.close()
 train_loss = u_net.params['train_loss']
 valid_loss = u_net.params['valid_loss']
-train_score = u_net.params['train_score']
-valid_score = u_net.params['valid_score']
+train_score = u_net.params['train_iou']
+valid_score = u_net.params['valid_iou']
 
 print(
     'final train/valid loss = {:.4f}/{:.4f}'.format(
         train_loss[-1], valid_loss[-1]))
 print(
-    'final train/valid score = {:.4f}/{:.4f}'.format(
+    'final train/valid iou = {:.4f}/{:.4f}'.format(
         train_score[-1], valid_score[-1]))
 plt.figure(figsize=(10, 5))
 plt.subplot(1, 2, 1)
@@ -220,7 +220,7 @@ plt.plot(np.arange(0, len(train_loss)), train_loss, '-b', label='Training')
 plt.plot(np.arange(0, len(valid_loss)),
          valid_loss, '-g', label='Validation')
 plt.legend(loc='lower right', frameon=False)
-plt.ylim(ymax=0.5, ymin=0.0)
+#plt.ylim(ymax=0.5, ymin=0.0)
 plt.ylabel('loss')
 plt.xlabel('steps')
 
@@ -230,8 +230,8 @@ plt.plot(np.arange(0, len(train_score)),
 plt.plot(np.arange(0, len(valid_score)),
          valid_score, '-g', label='Validation')
 plt.legend(loc='lower right', frameon=False)
-plt.ylim(ymax=1.0, ymin=0.0)
-plt.ylabel('score')
+#plt.ylim(ymax=1.0, ymin=0.0)
+plt.ylabel('iou')
 plt.xlabel('steps')
 
 # %% ##########################################################################
@@ -270,6 +270,8 @@ y_valid_pred_proba = u_net.get_prediction(
 if not POST_PROCESSING:
     y_valid_pred = utils.trsf_proba_to_binary(
         y_valid_pred_proba, threshold=0.5)
+else:
+    y_valid_pred = y_valid_pred_proba
 
 valid_score = u_net.get_score(
     y_valid_pred_proba, y_vld, from_paths=True,
@@ -310,18 +312,18 @@ sess.close()
 # #############################################################################
 MIN_OBJECT_SIZE = 20
 inference_batch = 50
-count, rest = divmod(len(x_test), inference_batch)
-
+count = len(x_test) // inference_batch
 u_net = U_Net(dir_dict=DIR_DICT)
-sess = u_net.load_session_from_file(nn_name)
-
 test_pred_rle = []
 test_pred_ids = []
-for j in tqdm(range(0, count * inference_batch, inference_batch)):
+
+sess = u_net.load_session_from_file(nn_name)
+
+for j in tqdm(range(0, (count + 1) * inference_batch, inference_batch)):
     ids = test_ids[j:j + inference_batch]
     data = x_test[j:j + inference_batch]
     sizes = test_sizes[j:j + inference_batch]
-    y_test_pred = u_net.get_prediction(
+    y_test_pred_prob = u_net.get_prediction(
         sess, data,
         from_paths=True,
         method=METHOD,
@@ -331,72 +333,51 @@ for j in tqdm(range(0, count * inference_batch, inference_batch)):
         post_processing=POST_PROCESSING)
 
     if not POST_PROCESSING:
-        y_test_pred = utils.trsf_proba_to_binary(y_test_pred)
+        y_test_pred = utils.trsf_proba_to_binary(y_test_pred_prob)
+    else:
+        y_test_pred = y_test_pred_prob
 
-    y_test_pred = utils.resize_as_original(
+    y_test_pred_original_size = utils.resize_as_original(
         y_test_pred, sizes)
-    y_test_pred, rle_id = utils.mask_to_rle_wrapper(
-        y_test_pred, ids,
-        min_object_size=MIN_OBJECT_SIZE)
-    test_pred_rle.extend(y_test_pred)
+    rle, rle_id = utils.mask_to_rle_wrapper(
+        y_test_pred_original_size, ids,
+        min_object_size=MIN_OBJECT_SIZE,
+        post_processed=POST_PROCESSING)
+    test_pred_rle.extend(rle)
     test_pred_ids.extend(rle_id)
+#    if METHOD is None and j == 1500:
+#        # Create submission file, save to disk and release some memory
+#        sub = pd.DataFrame()
+#        sub['ImageId'] = test_pred_ids
+#        sub['EncodedPixels'] = pd.Series(test_pred_rle).apply(
+#            lambda x: ' '.join(str(y) for y in x))
+    #        sub.to_csv('sub-dsbowl2018-1.csv', index=False)
+#        sub.head()
+#        test_pred_rle = []
+#        test_pred_ids = []
 
-    if METHOD is None and j == 1500:
-        # Create submission file, save to disk and release some memory
-        sub = pd.DataFrame()
-        sub['ImageId'] = test_pred_ids
-        sub['EncodedPixels'] = pd.Series(test_pred_rle).apply(
-            lambda x: ' '.join(str(y) for y in x))
-        sub.to_csv('sub-dsbowl2018-1.csv', index=False)
-        sub.head()
-        test_pred_rle = []
-        test_pred_ids = []
-
-if rest:
-    ids = test_ids[-rest:]
-    data = x_test[-rest:]
-    sizes = test_sizes[-rest:]
-    y_test_pred = u_net.get_prediction(
-        sess, data,
-        from_paths=True,
-        method=METHOD,
-        tgt_size=(IMG_HEIGHT, IMG_WIDTH),
-        check_compatibility=True,
-        compatibility_multiplier=32,
-        post_processing=True)
-
-    y_test_pred = utils.trsf_proba_to_binary(y_test_pred)
-    y_test_pred = utils.resize_as_original(
-        y_test_pred, sizes)
-    y_test_pred, ids = utils.mask_to_rle_wrapper(
-        y_test_pred, ids,
-        min_object_size=MIN_OBJECT_SIZE)
-    test_pred_rle.extend(y_test_pred)
-    test_pred_ids.extend(ids)
-
-    # Create submission file
-    sub = pd.DataFrame()
-    sub['ImageId'] = test_pred_ids
-    sub['EncodedPixels'] = pd.Series(test_pred_rle).apply(
-        lambda x: ' '.join(str(y) for y in x))
-    sub.to_csv('sub-dsbowl2018-2.csv', index=False)
-    sub.head()
-    test_pred_rle = []
-    test_pred_ids = []
+# Create submission file
+sub = pd.DataFrame()
+sub['ImageId'] = test_pred_ids
+sub['EncodedPixels'] = pd.Series(test_pred_rle).apply(
+    lambda x: ' '.join(str(y) for y in x))
+sub.to_csv('sub-dsbowl2018-1.csv', index=False)
+sub.head()
 
 print('test_pred_ids.shape = {}'.format(np.array(test_pred_ids).shape))
 print('test_pred_rle.shape = {}'.format(np.array(test_pred_rle).shape))
 
 # Inspect a test prediction and check run length encoding.
 # n = np.random.randint(len(x_test))
-n = 143
+n = 171
 pred = u_net.get_prediction(
     sess, [x_test[n]],
     from_paths=True,
     method=METHOD,
     tgt_size=(IMG_HEIGHT, IMG_WIDTH),
     check_compatibility=True,
-    compatibility_multiplier=32)[0]
+    compatibility_multiplier=32,
+    post_processing=POST_PROCESSING)[0]
 y_test_pred = utils.trsf_proba_to_binary(pred)
 y_test_pred_original_size = utils.resize_as_original(
     [y_test_pred], [test_sizes[n]])
@@ -421,5 +402,39 @@ axs[1, 1].set_title(
 axs[1, 2].imshow(mask_rec, cm.gray)
 axs[1, 2].set_title(
     '{}.) final mask recovered from run length encoding'.format(n))
+
+sess.close()
+
+# %% ############## Check multi head precictions ##############################
+u_net = U_Net(dir_dict=DIR_DICT)
+sess = u_net.load_session_from_file(nn_name)
+n = 172
+
+pred = u_net.get_prediction(
+    sess, [x_test[n]],
+    from_paths=True,
+    method=METHOD,
+    tgt_size=(IMG_HEIGHT, IMG_WIDTH),
+    check_compatibility=True,
+    compatibility_multiplier=32,
+    post_processing=False,
+    full_prediction=True)
+
+
+pred_water = u_net.get_prediction(
+    sess, data,
+    from_paths=[x_test[n]],
+    method=METHOD,
+    tgt_size=(IMG_HEIGHT, IMG_WIDTH),
+    check_compatibility=True,
+    compatibility_multiplier=32,
+    post_processing=True,
+    full_prediction=False)
+
+fig, axs = plt.subplots(2, 4)
+axs[0, 0].imshow(utils.read_image(x_test[n]))
+axs[0, 1].imshow(pred[0, :, :, 0])
+axs[0, 2].imshow(pred[0, :, :, 1])
+axs[0, 3].imshow(pred[0, :, :, 2])
 
 sess.close()
