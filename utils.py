@@ -8,7 +8,7 @@ import tqdm
 from scipy.ndimage import label
 import keras.preprocessing.image
 import skimage
-from skimage.morphology import watershed, binary_dilation
+from skimage.morphology import watershed, binary_dilation, binary_erosion
 from data_augmentation import random_transform
 
 # Collection of methods for data operations. Implemented are functions to read
@@ -225,7 +225,7 @@ def load_images_masks(x_paths, y_paths):
     masks = []
     for im_path, mask_path in zip(x_paths, y_paths):
         imgs.append(np.load(im_path + 'img.npy'))
-        masks.append(np.load(mask_path + 'mask.npy'))
+        masks.append(np.load(mask_path + 'mask2.npy'))
 
     return np.array(imgs), np.array(masks)
 
@@ -413,14 +413,41 @@ def overlap_from_mask(directory, selem=3):
     return border.astype(np.uint8)
 
 
-def generate_unjoint_mask(directory, selem=3, tgt_size=None):
-    '''Generate unjoint masks to train'''
+def overlap_and_markers_from_mask(directory, selem=4):
+    '''Generate overlap borders and markers from mask'''
+    for i, filename in enumerate(next(os.walk(directory))[2]):
+        mask_path = os.path.join(directory, filename)
+        mask_tmp = read_image(mask_path, cv2.IMREAD_GRAYSCALE, None)
+        m = label(mask_tmp)[0]
+        bm = binary_dilation(
+            m, selem=np.ones([selem, selem])).astype(np.int32)
+
+        if not i:
+            border = bm
+            marker = (i + 1) * m
+        else:
+            border = border + bm
+            marker = marker + (i + 1) * m
+
+    border[border == 1] = 0
+    border[border > 1] = 1
+    return border.astype(np.uint8), marker
+
+
+def generate_unjoint_mask(directory, dilation_selem=5, erosion_selem=2, tgt_size=None):
+    '''Generate mask, unjoint masks and borders to train'''
     mask = read_mask(directory)
-    overlap = overlap_from_mask(directory, selem)
+    overlap, marker = overlap_and_markers_from_mask(directory, dilation_selem)
+    unjoint_mask = watershed(mask, marker, mask=mask, watershed_line=True)
+    unjoint_mask = binary_erosion(
+        trsf_proba_to_binary(unjoint_mask),
+        selem=np.ones([erosion_selem, erosion_selem])).astype(np.uint8)
     if tgt_size is not None:
         mask = cv2.resize(mask, tgt_size, interpolation=cv2.INTER_AREA)
         overlap = cv2.resize(overlap, tgt_size, interpolation=cv2.INTER_AREA)
-    return mask, mask * (1 - overlap), overlap
+        unjoint_mask = cv2.resize(
+            unjoint_mask, tgt_size, interpolation=cv2.INTER_AREA)
+    return mask, unjoint_mask * (1 - overlap), overlap
 
 # Collection of methods for basic data manipulation like normalizing,
 # inverting, color transformation and generating new images/masks

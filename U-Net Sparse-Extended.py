@@ -49,23 +49,24 @@ y_test_pred = {}
 # %%###########################################################################
 ########################### HYPERPARAMETERS ###################################
 ###############################################################################
-LEARN_RATE_0 = 0.001
+LEARN_RATE_0 = 1e-3
 LEARN_RATE_ALPHA = 0.25
 LEARN_RATE_STEP = 3
-N_EPOCH = 40
+N_EPOCH = 30
 MB_SIZE = 10
 KEEP_PROB = 0.8
 ACTIVATION = 'selu'
 PADDING = 'SYMMETRIC'
-AUGMENTATION = True
+AUGMENTATION = False
 LOSS = [[categorical_cross_entropy(), soft_dice(logits_axis=1, label_axis=0)],
         [categorical_cross_entropy(onehot_convert=False),
          soft_dice(logits_axis=1, label_axis=1, weight=2),
-         soft_dice(logits_axis=2, label_axis=2, weight=5)]]
-# LOSS = [0,
+         soft_dice(logits_axis=2, label_axis=2, weight=10)]]
+
+#LOSS = [None,
 #         [categorical_cross_entropy(onehot_convert=False),
 #          soft_dice(logits_axis=1, label_axis=1),
-#          soft_dice(logits_axis=2, label_axis=2, weight=5)]]
+#          soft_dice(logits_axis=2, label_axis=2, weight=2)]]
 
 # %%###########################################################################
 ############################## LOADING DATASETS ###############################
@@ -162,7 +163,7 @@ for i, (train_index, valid_index) in enumerate(kfold.split(x_train)):
                     u_net.train_graph(sess,
                                       x_train=x_trn, y_train=y_trn,
                                       x_valid=x_vld, y_valid=y_vld,
-                                      n_epoch=10,
+                                      n_epoch=5,
                                       train_on_augmented_data=AUGMENTATION,
                                       train_profille='top',
                                       method='resize',
@@ -173,7 +174,7 @@ for i, (train_index, valid_index) in enumerate(kfold.split(x_train)):
                                   x_valid=x_vld, y_valid=y_vld,
                                   n_epoch=N_EPOCH,
                                   train_on_augmented_data=AUGMENTATION,
-                                  # lr = 0.0001,
+                                   lr = 1e-4,
                                   train_profille='all',
                                   method='resize',
                                   )
@@ -197,7 +198,7 @@ for i, (train_index, valid_index) in enumerate(kfold.split(x_train)):
                               n_epoch=N_EPOCH,
                               train_on_augmented_data=True,
                               train_profille='all',
-                              method='random_crop',
+                              method='resize',
                               )
             u_net.save_model(sess)  # Save parameters, tensors, summaries.
 
@@ -211,8 +212,10 @@ sess = u_net.load_session_from_file(nn_name)
 sess.close()
 train_loss = u_net.params['train_loss']
 valid_loss = u_net.params['valid_loss']
-train_mask_iou = u_net.params['train_mask2_iou']
-valid_mask_iou = u_net.params['valid_mask2_iou']
+train_mask_iou = u_net.params['train_mask_iou']
+valid_mask_iou = u_net.params['valid_mask_iou']
+train_mask2_iou = u_net.params['train_mask2_iou']
+valid_mask2_iou = u_net.params['valid_mask2_iou']
 train_border_iou = u_net.params['train_border_iou']
 valid_border_iou = u_net.params['valid_border_iou']
 
@@ -222,7 +225,9 @@ print(
 print(
     'final train/valid mask iou = {:.4f}/{:.4f}'.format(
         train_mask_iou[-1], valid_mask_iou[-1]))
-
+print(
+    'final train/valid borderless mask iou = {:.4f}/{:.4f}'.format(
+        train_mask2_iou[-1], valid_mask2_iou[-1]))
 print(
     'final train/valid border iou = {:.4f}/{:.4f}'.format(
         train_border_iou[-1], valid_border_iou[-1]))
@@ -239,13 +244,17 @@ plt.xlabel('steps')
 
 plt.subplot(1, 2, 2)
 plt.plot(np.arange(0, len(train_mask_iou)),
-         train_mask_iou, '-b', label='Training Mask IoU')
+         train_mask_iou, '-b', label='Train. Mask IoU')
 plt.plot(np.arange(0, len(valid_mask_iou)),
-         valid_mask_iou, '-g', label='Validation Mask IoU')
+         valid_mask_iou, '-g', label='Val. Mask IoU')
+plt.plot(np.arange(0, len(train_mask_iou)),
+         train_mask2_iou, '-.b', label='Train. BorderlessMask IoU')
+plt.plot(np.arange(0, len(valid_mask_iou)),
+         valid_mask2_iou, '-.g', label='Val. BorderlessMask IoU')
 plt.plot(np.arange(0, len(train_border_iou)),
-         train_border_iou, ':b', label='Training Border IoU')
+         train_border_iou, ':b', label='Train. Border IoU')
 plt.plot(np.arange(0, len(valid_border_iou)),
-         valid_border_iou, ':g', label='Validation Border IoU')
+         valid_border_iou, ':g', label='Val. Border IoU')
 
 plt.legend(loc='lower right', frameon=False)
 #plt.ylim(ymax=1.0, ymin=0.0)

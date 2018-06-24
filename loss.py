@@ -21,7 +21,7 @@ class categorical_cross_entropy():
         else:
             weights = 1.0
         loss = tf.losses.softmax_cross_entropy(
-            onehot_labels=onehot_labels,
+            onehot_labels,
             logits=logits_tf,
             weights=weights)
         loss = tf.reduce_mean(loss)
@@ -51,7 +51,7 @@ class soft_dice():
         smooth = 1
         logits_tf = logits_tf[:, :, :, self.logits_axis]
         y_tf = y_tf[:, :, :, self.label_axis]
-        prob = tf.nn.softmax(logits_tf)
+        prob = tf.nn.sigmoid(logits_tf)
 
         intersection = tf.reduce_sum(prob * y_tf)
         union = tf.reduce_sum(prob + y_tf)
