@@ -59,10 +59,12 @@ class ConvNetwork_ABC():
         # Parameters that should be stored.
         self.params['train_loss'] = []
         self.params['valid_loss'] = []
-        self.params['train_score'] = []
-        self.params['valid_score'] = []
-        self.params['train_iou'] = []
-        self.params['valid_iou'] = []
+        self.params['train_mask_iou'] = []
+        self.params['valid_mask_iou'] = []
+        self.params['train_mask2_iou'] = []
+        self.params['valid_mask2_iou'] = []
+        self.params['train_border_iou'] = []
+        self.params['valid_border_iou'] = []
 
     def get_learn_rate(self):
         """Compute the current learning rate."""
@@ -489,8 +491,11 @@ class U_Net(ConvNetwork_ABC):
                                        name='w_tf')  # (.,128,128,1)
 
             # Loss tensor
-            loss = tf.reduce_sum([l(self.full_mask_logits_tf, self.full_mask_y_tf)
-                                  for l in self.loss[0]])
+            if self.loss[0] is not None:
+                loss = tf.reduce_sum([l(self.full_mask_logits_tf, self.full_mask_y_tf)
+                                      for l in self.loss[0]])
+            else:
+                loss = 0
             if self.multi_head:
                 loss = loss + tf.reduce_sum(
                     [l(self.borders_logits_tf, self.borders_y_tf)
@@ -684,14 +689,13 @@ class U_Net(ConvNetwork_ABC):
 
         intersection = np.sum(pred * y)
         union = np.sum(pred + y)
-        return intersection / union
+        return 2 * intersection / union
 
     def get_prediction(self, sess, x_data,
                        from_paths=False,
                        check_compatibility=False,
                        compatibility_multiplier=32,
                        tgt_size=None, method=None,
-                       post_processing=False,
                        full_prediction=False,
                        keep_prob=1.0):
         """ Prediction of the neural network graph. """
@@ -718,15 +722,12 @@ class U_Net(ConvNetwork_ABC):
                             feed_dict={self.x_tf: x_data,
                                        self.keep_prob_tf: keep_prob})
 
-        if self.multi_head and (post_processing or full_prediction):
+        if self.multi_head and full_prediction:
             borders = sess.run(tf.nn.softmax(self.borders_logits_tf),
                                feed_dict={self.x_tf: x_data,
                                           self.keep_prob_tf: keep_prob})
-            if post_processing:
-                pred = utils.postprocessing(pred, borders, method='watershed')
-            else:
-                pred = np.concatenate(
-                    [pred[:, :, :, 1:], borders[:, :, :, 1:]], -1)
+            pred = np.concatenate(
+                [pred[:, :, :, 1:], borders[:, :, :, 1:]], -1)
 
         else:
             pred = pred[:, :, :, 1]
@@ -838,24 +839,35 @@ class U_Net(ConvNetwork_ABC):
                     # Evaluate current loss and score
                     dct['loss'] = sess.run(self.loss_tf,
                                            feed_dict=dct['feed_dict'])
-                    pred = self.get_prediction(sess, x)
-                    dct['score'] = np.mean(self.get_score(pred, y[:, :, :, 0]))
-                    dct['iou'] = np.mean(self.get_IoU(pred, y[:, :, :, 0]))
+                    pred = self.get_prediction(sess, x, full_prediction=True)
+                    dct['mask_iou'] = np.mean(
+                        self.get_IoU(pred[:, :, :, 0], y[:, :, :, 0]))
+                    if self.multi_head:
+                        dct['border_iou'] = np.mean(
+                            self.get_IoU(pred[:, :, :, 2], y[:, :, :, 3]))
+                        dct['mask2_iou'] = np.mean(
+                            self.get_IoU(pred[:, :, :, 1], y[:, :, :, 2]))
+                    else:
+                        dct['border_iou'] = 0
 
                 print(('{:.2f} epoch: train/valid loss = {:.4f}/{:.4f} ' +
-                       'train/valid score = {:.4f}/{:.4f} ' +
-                       'train/valid IoU = {:.4f}/{:.4f}').format(
+                       'train/valid mask IoU = {:.4f}/{:.4f} ' +
+                       'train/valid borderless mask IoU = {:.4f}/{:.4f} ' +
+                       'train/valid border IoU = {:.4f}/{:.4f}').format(
                     self.epoch, trn_dct['loss'], val_dct['loss'],
-                      trn_dct['score'], val_dct['score'],
-                      trn_dct['iou'], val_dct['iou']))
+                      trn_dct['mask_iou'], val_dct['mask_iou'],
+                      trn_dct['mask2_iou'], val_dct['mask2_iou'],
+                      trn_dct['border_iou'], val_dct['border_iou']))
 
                 # Store losses and scores.
                 self.params['train_loss'].extend([trn_dct['loss']])
                 self.params['valid_loss'].extend([val_dct['loss']])
-                self.params['train_score'].extend([trn_dct['score']])
-                self.params['valid_score'].extend([val_dct['score']])
-                self.params['train_iou'].extend([trn_dct['iou']])
-                self.params['valid_iou'].extend([val_dct['iou']])
+                self.params['train_mask_iou'].extend([trn_dct['mask_iou']])
+                self.params['valid_mask_iou'].extend([val_dct['mask_iou']])
+                self.params['train_mask2_iou'].extend([trn_dct['mask2_iou']])
+                self.params['valid_mask2_iou'].extend([val_dct['mask2_iou']])
+                self.params['train_border_iou'].extend([trn_dct['border_iou']])
+                self.params['valid_border_iou'].extend([val_dct['border_iou']])
 
                 # Save summaries for TensorBoard.
                 if self.use_tb_summary:

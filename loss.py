@@ -40,20 +40,17 @@ class categorical_cross_entropy():
 
 
 class soft_dice():
-    '''Soft dice (IoU) loss
-        exclude_background is used to avoid computing dice loss over
-        background channel'''
+    '''Soft dice (IoU) loss'''
 
-    def __init__(self, exclude_background=True, is_onehot=False):
-        self.exclude_background = exclude_background
-        self.is_onehot = is_onehot
+    def __init__(self, logits_axis, label_axis, weight=1):
+        self.logits_axis = logits_axis
+        self.label_axis = label_axis
+        self.weight = weight
 
     def __call__(self, logits_tf, y_tf):
         smooth = 1
-        if self.exclude_background:
-            logits_tf = logits_tf[:, :, :, 1:]
-            if self.is_onehot:
-                y_tf = y_tf[:, :, :, 1:]
+        logits_tf = logits_tf[:, :, :, self.logits_axis]
+        y_tf = y_tf[:, :, :, self.label_axis]
         prob = tf.nn.softmax(logits_tf)
 
         intersection = tf.reduce_sum(prob * y_tf)
@@ -62,4 +59,4 @@ class soft_dice():
             (union + smooth)
 
         loss = 1 - tf.reduce_mean(dice_coeff)
-        return loss
+        return self.weight * loss

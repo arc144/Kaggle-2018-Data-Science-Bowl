@@ -13,14 +13,14 @@ import utils
 from loss import categorical_cross_entropy, soft_dice
 from tqdm import tqdm
 from NeuralNetworks import U_Net
-
+from scipy.ndimage import label
 
 # ##################### Global constants #################
 IMG_WIDTH = 256        # Default image width
 IMG_HEIGHT = 256       # Default image height
 IMG_CHANNELS = 3       # Default number of channels
-NET_TYPE = 'vanilla'  # Network to use
-nn_name = 'unet_vanilla_V1_Saug_dice+bce_multihead'
+NET_TYPE = 'Xception_InceptionSE'  # Network to use
+nn_name = 'unet_Xception_InceptionSE_V1_Saug_dice+bce_multihead'
 USE_WEIGHTS = False    # For weighted bce
 METHOD = 'resize'   # Either crop or resize
 MULTI_HEAD = True
@@ -49,7 +49,7 @@ y_test_pred = {}
 # %%###########################################################################
 ########################### HYPERPARAMETERS ###################################
 ###############################################################################
-LEARN_RATE_0 = 0.01
+LEARN_RATE_0 = 0.001
 LEARN_RATE_ALPHA = 0.25
 LEARN_RATE_STEP = 3
 N_EPOCH = 40
@@ -58,8 +58,14 @@ KEEP_PROB = 0.8
 ACTIVATION = 'selu'
 PADDING = 'SYMMETRIC'
 AUGMENTATION = True
-LOSS = [[categorical_cross_entropy(), soft_dice(is_onehot=False)],
-        [categorical_cross_entropy(onehot_convert=False), soft_dice(is_onehot=True)]]
+LOSS = [[categorical_cross_entropy(), soft_dice(logits_axis=1, label_axis=0)],
+        [categorical_cross_entropy(onehot_convert=False),
+         soft_dice(logits_axis=1, label_axis=1, weight=2),
+         soft_dice(logits_axis=2, label_axis=2, weight=5)]]
+# LOSS = [0,
+#         [categorical_cross_entropy(onehot_convert=False),
+#          soft_dice(logits_axis=1, label_axis=1),
+#          soft_dice(logits_axis=2, label_axis=2, weight=5)]]
 
 # %%###########################################################################
 ############################## LOADING DATASETS ###############################
@@ -205,15 +211,22 @@ sess = u_net.load_session_from_file(nn_name)
 sess.close()
 train_loss = u_net.params['train_loss']
 valid_loss = u_net.params['valid_loss']
-train_score = u_net.params['train_iou']
-valid_score = u_net.params['valid_iou']
+train_mask_iou = u_net.params['train_mask2_iou']
+valid_mask_iou = u_net.params['valid_mask2_iou']
+train_border_iou = u_net.params['train_border_iou']
+valid_border_iou = u_net.params['valid_border_iou']
 
 print(
     'final train/valid loss = {:.4f}/{:.4f}'.format(
         train_loss[-1], valid_loss[-1]))
 print(
-    'final train/valid iou = {:.4f}/{:.4f}'.format(
-        train_score[-1], valid_score[-1]))
+    'final train/valid mask iou = {:.4f}/{:.4f}'.format(
+        train_mask_iou[-1], valid_mask_iou[-1]))
+
+print(
+    'final train/valid border iou = {:.4f}/{:.4f}'.format(
+        train_border_iou[-1], valid_border_iou[-1]))
+
 plt.figure(figsize=(10, 5))
 plt.subplot(1, 2, 1)
 plt.plot(np.arange(0, len(train_loss)), train_loss, '-b', label='Training')
@@ -225,84 +238,48 @@ plt.ylabel('loss')
 plt.xlabel('steps')
 
 plt.subplot(1, 2, 2)
-plt.plot(np.arange(0, len(train_score)),
-         train_score, '-b', label='Training')
-plt.plot(np.arange(0, len(valid_score)),
-         valid_score, '-g', label='Validation')
+plt.plot(np.arange(0, len(train_mask_iou)),
+         train_mask_iou, '-b', label='Training Mask IoU')
+plt.plot(np.arange(0, len(valid_mask_iou)),
+         valid_mask_iou, '-g', label='Validation Mask IoU')
+plt.plot(np.arange(0, len(train_border_iou)),
+         train_border_iou, ':b', label='Training Border IoU')
+plt.plot(np.arange(0, len(valid_border_iou)),
+         valid_border_iou, ':g', label='Validation Border IoU')
+
 plt.legend(loc='lower right', frameon=False)
 #plt.ylim(ymax=1.0, ymin=0.0)
 plt.ylabel('iou')
 plt.xlabel('steps')
 
-# %% ##########################################################################
-################# SAME K-fold in case training is not run #####################
-###############################################################################
-cv_num = 10
-kfold = sklearn.model_selection.KFold(
-    cv_num, shuffle=True, random_state=SEED)
 
-for i, (train_index, valid_index) in enumerate(kfold.split(x_train)):
-    # Start timer
-    start = datetime.datetime.now()
-
-    # Split into train and validation
-    x_trn = x_train[train_index]
-    y_trn = y_train[train_index]
-#    w_trn = y_weights[train_index]
-
-    x_vld = x_train[valid_index]
-    y_vld = y_train[valid_index]
-#    w_vld = y_weights[valid_index]
-
-# %%###########################################################################
- # Summary of scores for training and validations sets. Note that the score is#
- # better than the true score, since overlapping/touching nuclei can not be   #
- # separately identified in this version.                                     #
- ##############################################################################
+# %% ############## Check multi head precictions ##############################
 u_net = U_Net(dir_dict=DIR_DICT)
 sess = u_net.load_session_from_file(nn_name)
+n = 47
 
-# Overall score on validation set.
-y_valid_pred_proba = u_net.get_prediction(
-    sess, x_vld, from_paths=True, method=METHOD, tgt_size=(IMG_HEIGHT, IMG_WIDTH),
-    post_processing=POST_PROCESSING)
-
-if not POST_PROCESSING:
-    y_valid_pred = utils.trsf_proba_to_binary(
-        y_valid_pred_proba, threshold=0.5)
-else:
-    y_valid_pred = y_valid_pred_proba
-
-valid_score = u_net.get_score(
-    y_valid_pred_proba, y_vld, from_paths=True,
-    method=METHOD, tgt_size=(IMG_HEIGHT, IMG_WIDTH),
-    post_processing=POST_PROCESSING)
-
-tmp = np.concatenate([np.arange(len(valid_index)).reshape(-1, 1),
-                      valid_index.reshape(-1, 1),
-                      valid_score.reshape(-1, 1)], axis=1)
-valid_score_df = pd.DataFrame(tmp, columns=(
-    ['index', 'valid_index', 'valid_score']))
-print('\n', valid_score_df.describe())
-print('\n', valid_score_df.sort_values(
-    by='valid_score', ascending=True).head())
-
-# Plot the worst 4 predictions.
-fig, axs = plt.subplots(4, 4, figsize=(20, 20))
-list_ = valid_score_df.sort_values(by='valid_score', ascending=True)[
-    :4]['index'].values.astype(np.int)
-# list_ =
-# [valid_score_df['valid_score'].idxmin(),valid_score_df['valid_score'].idxmax()]
-for i, n in enumerate(list_):
-    img = utils.imshow_args(utils.read_image(x_vld[n]))
-    axs[i, 0].imshow(img)
-    axs[i, 0].set_title('{}.) input image'.format(n))
-    axs[i, 1].imshow(np.squeeze(utils.read_mask(y_vld[n])), cmap='jet')
-    axs[i, 1].set_title('{}.) true mask'.format(n))
-    axs[i, 2].imshow(y_valid_pred_proba[n], cmap='jet')
-    axs[i, 2].set_title('{}.) predicted mask probabilities'.format(n))
-    axs[i, 3].imshow(y_valid_pred[n], cmap='jet')
-    axs[i, 3].set_title('{}.) predicted mask'.format(n))
+pred = u_net.get_prediction(
+    sess, [x_test[n]],
+    from_paths=True,
+    method=METHOD,
+    tgt_size=(IMG_HEIGHT, IMG_WIDTH),
+    check_compatibility=True,
+    compatibility_multiplier=32,
+    full_prediction=True)
+pred = utils.trsf_proba_to_binary(pred)
+markers = label(pred[0, :, :, 1] * (1 - pred[0, :, :, 2]))[0]
+pred_water = utils.postprocessing(pred, method='watershed')
+fig, axs = plt.subplots(1, 5, sharex=False)
+axs[0].imshow(utils.read_image(x_test[n]))
+axs[0].set_title('image')
+axs[1].imshow(pred[0, :, :, 0], cmap='jet')
+axs[1].set_title('pred full mask')
+axs[2].imshow(pred[0, :, :, 2], cmap='jet')
+axs[2].set_title('pred borders')
+axs[3].imshow(markers, cmap='jet')
+axs[3].set_title('pred markers')
+axs[4].imshow(pred_water[0], cmap='jet')
+axs[4].set_title('pred watershed')
 
 sess.close()
 
@@ -323,24 +300,25 @@ for j in tqdm(range(0, (count + 1) * inference_batch, inference_batch)):
     ids = test_ids[j:j + inference_batch]
     data = x_test[j:j + inference_batch]
     sizes = test_sizes[j:j + inference_batch]
-    y_test_pred_prob = u_net.get_prediction(
+    y_test_pred = u_net.get_prediction(
         sess, data,
         from_paths=True,
         method=METHOD,
         tgt_size=(IMG_HEIGHT, IMG_WIDTH),
         check_compatibility=True,
         compatibility_multiplier=32,
-        post_processing=POST_PROCESSING)
+        full_prediction=True)
 
-    if not POST_PROCESSING:
-        y_test_pred = utils.trsf_proba_to_binary(y_test_pred_prob)
+    y_test_pred = utils.trsf_proba_to_binary(y_test_pred)
+    y_test_pred = utils.resize_as_original(y_test_pred, sizes)
+
+    if POST_PROCESSING:
+        y_test_pred = utils.postprocessing(y_test_pred, method='watershed')
     else:
-        y_test_pred = y_test_pred_prob
+        y_test_pred[:, :, :, 0]
 
-    y_test_pred_original_size = utils.resize_as_original(
-        y_test_pred, sizes)
     rle, rle_id = utils.mask_to_rle_wrapper(
-        y_test_pred_original_size, ids,
+        y_test_pred, ids,
         min_object_size=MIN_OBJECT_SIZE,
         post_processed=POST_PROCESSING)
     test_pred_rle.extend(rle)
@@ -361,7 +339,7 @@ sub = pd.DataFrame()
 sub['ImageId'] = test_pred_ids
 sub['EncodedPixels'] = pd.Series(test_pred_rle).apply(
     lambda x: ' '.join(str(y) for y in x))
-sub.to_csv('sub-dsbowl2018-1.csv', index=False)
+sub.to_csv('sub-dsbowl2018-2.csv', index=False)
 sub.head()
 
 print('test_pred_ids.shape = {}'.format(np.array(test_pred_ids).shape))
@@ -377,10 +355,10 @@ pred = u_net.get_prediction(
     tgt_size=(IMG_HEIGHT, IMG_WIDTH),
     check_compatibility=True,
     compatibility_multiplier=32,
-    post_processing=POST_PROCESSING)[0]
+    full_prediction=True)[0]
 y_test_pred = utils.trsf_proba_to_binary(pred)
 y_test_pred_original_size = utils.resize_as_original(
-    [y_test_pred], [test_sizes[n]])
+    [y_test_pred], [test_sizes[n]])[:, :, 0]
 rle = list(utils.mask_to_rle(y_test_pred_original_size))
 mask_rec = utils.rle_to_mask(rle, test_sizes[n])
 print('Run length encoding: {} matches, {} misses'.format(
@@ -392,49 +370,15 @@ axs[0, 0].imshow(utils.read_image(test_df['image_path'].loc[n]))
 axs[0, 0].set_title('{}.) original test image'.format(n))
 axs[0, 1].imshow(np.squeeze((utils.read_image(x_test[n]))))
 axs[0, 1].set_title('{}.) transformed test image'.format(n))
-axs[0, 2].imshow(np.squeeze(pred), cm.gray)
+axs[0, 2].imshow(np.squeeze(pred[:, :, 0]), cm.gray)
 axs[0, 2].set_title('{}.) predicted test mask probabilities'.format(n))
-axs[1, 0].imshow(np.squeeze(y_test_pred), cm.gray)
+axs[1, 0].imshow(np.squeeze(y_test_pred[:, :, 0]), cm.gray)
 axs[1, 0].set_title('{}.) predicted test mask'.format(n))
-axs[1, 1].imshow(np.squeeze(y_test_pred_original_size), cm.gray)
+axs[1, 1].imshow(np.squeeze(y_test_pred_original_size[:, :, 0]), cm.gray)
 axs[1, 1].set_title(
     '{}.) predicted final test mask in original size'.format(n))
 axs[1, 2].imshow(mask_rec, cm.gray)
 axs[1, 2].set_title(
     '{}.) final mask recovered from run length encoding'.format(n))
-
-sess.close()
-
-# %% ############## Check multi head precictions ##############################
-u_net = U_Net(dir_dict=DIR_DICT)
-sess = u_net.load_session_from_file(nn_name)
-n = 172
-
-pred = u_net.get_prediction(
-    sess, [x_test[n]],
-    from_paths=True,
-    method=METHOD,
-    tgt_size=(IMG_HEIGHT, IMG_WIDTH),
-    check_compatibility=True,
-    compatibility_multiplier=32,
-    post_processing=False,
-    full_prediction=True)
-
-
-pred_water = u_net.get_prediction(
-    sess, data,
-    from_paths=[x_test[n]],
-    method=METHOD,
-    tgt_size=(IMG_HEIGHT, IMG_WIDTH),
-    check_compatibility=True,
-    compatibility_multiplier=32,
-    post_processing=True,
-    full_prediction=False)
-
-fig, axs = plt.subplots(2, 4)
-axs[0, 0].imshow(utils.read_image(x_test[n]))
-axs[0, 1].imshow(pred[0, :, :, 0])
-axs[0, 2].imshow(pred[0, :, :, 1])
-axs[0, 3].imshow(pred[0, :, :, 2])
 
 sess.close()

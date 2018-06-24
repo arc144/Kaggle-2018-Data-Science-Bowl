@@ -617,12 +617,12 @@ def augment_images_masks(imgs, masks):
         seed = np.random.randint(10000)
         ret_imgs.append(
             random_transform(x, row_axis=0, col_axis=1, channel_axis=2,
-                             rotation_range=360,
+                             rotation_range=90,
                              width_shift_range=0.,
                              height_shift_range=0.,
                              shear_range=0.7,
                              zoom_range=0.3,
-                             channel_shift_range=0.5,
+                             channel_shift_range=0.,
                              fill_mode='nearest',
                              cval=0.,
                              horizontal_flip=True,
@@ -631,7 +631,7 @@ def augment_images_masks(imgs, masks):
                              seed=seed))
         ret_masks.append(
             random_transform(y, row_axis=0, col_axis=1, channel_axis=2,
-                             rotation_range=360,
+                             rotation_range=90,
                              width_shift_range=0.,
                              height_shift_range=0.,
                              shear_range=0.7,
@@ -643,7 +643,7 @@ def augment_images_masks(imgs, masks):
                              vertical_flip=True,
                              channel_shuffle=False,
                              seed=seed))
-    return np.array(ret_imgs), np.array(ret_masks)
+    return np.array(ret_imgs), np.array(trsf_proba_to_binary(ret_masks))
 
 
 def resize_as_original(y_test_pred, test_sizes):
@@ -653,28 +653,32 @@ def resize_as_original(y_test_pred, test_sizes):
         original_size = test_sizes[i]
         if y_test_pred[i].shape[:2] != original_size:
             res_mask = trsf_proba_to_binary(
-                skimage.transform.resize(np.squeeze(y_test_pred[i]),
-                                         original_size,
-                                         mode='constant', preserve_range=True))
+                skimage.transform.resize(
+                    np.squeeze(y_test_pred[i]),
+                    original_size,
+                    mode='constant', preserve_range=True))
+
         else:
             res_mask = np.squeeze(y_test_pred[i])
         y_test_pred_original_size.append(res_mask)
     return np.array(y_test_pred_original_size)
 
 
-def postprocessing(pred, borders_head, method='watershed'):
+def postprocessing(pred, method='watershed'):
     '''Apply postprocessing to predictions'''
-    pred = pred[:, :, :, 1]
-    full_mask = trsf_proba_to_binary(pred)
-    borderless_mask = trsf_proba_to_binary(borders_head[:, :, :, 1])
-    borders = trsf_proba_to_binary(borders_head[:, :, :, 2])
-
-    water = []
+    ret = []
     for i in range(len(pred)):
-        markers = label(borderless_mask[i] * (1 - borders[i]))[0]
-        water.append(watershed(full_mask[i], markers=markers,
-                               mask=full_mask[i], watershed_line=False))
-    return np.array(water)
+        full_mask = trsf_proba_to_binary(pred[i][:, :, 0])
+
+        if method == 'watershed':
+            borderless_mask = trsf_proba_to_binary(pred[i][:, :, 1])
+            borders = trsf_proba_to_binary(pred[i][:, :, 2])
+            markers = label(borderless_mask * (1 - borders))[0]
+            ret.append(watershed(full_mask, markers=markers,
+                                 mask=full_mask, watershed_line=False))
+        else:
+            ret.append(full_mask)
+    return np.array(ret)
 
 
 # Collection of methods for run length encoding.
