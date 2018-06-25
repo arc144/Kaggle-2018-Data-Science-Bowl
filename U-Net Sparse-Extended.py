@@ -20,17 +20,17 @@ IMG_WIDTH = 256        # Default image width
 IMG_HEIGHT = 256       # Default image height
 IMG_CHANNELS = 3       # Default number of channels
 NET_TYPE = 'Xception_InceptionSE'  # Network to use
-nn_name = 'unet_Xception_InceptionSE_V1_Saug_dice+bce_multihead'
+nn_name = 'unet_Xception_InceptionSE_V9_Saug_dice+bce_multihead'
 USE_WEIGHTS = False    # For weighted bce
 METHOD = 'resize'   # Either crop or resize
 MULTI_HEAD = True
 POST_PROCESSING = True
 
 # %%####################### DIRS #########################
-TRAIN_DIR = os.path.join(os.getcwd(), 'stage1_train')
+#TRAIN_DIR = os.path.join(os.getcwd(), 'stage1_train')
 TEST_DIR = os.path.join(os.getcwd(), 'stage2_final_test')
 VAL_DIR = os.path.join(os.getcwd(), 'stage1_test')
-#TRAIN_DIR = os.path.join(os.getcwd(), 'External datasets/external_data/train')
+TRAIN_DIR = os.path.join(os.getcwd(), 'External datasets/external_data/train')
 # TEST_DIR = os.path.join(os.getcwd(), 'External datasets/external_data/test')
 IMG_TYPE = '.png'         # Image type
 DIR_DICT = dict(logs='logs', saves='saves')
@@ -57,7 +57,7 @@ MB_SIZE = 10
 KEEP_PROB = 0.8
 ACTIVATION = 'selu'
 PADDING = 'SYMMETRIC'
-AUGMENTATION = False
+AUGMENTATION = True
 LOSS = [[categorical_cross_entropy(), soft_dice(logits_axis=1, label_axis=0)],
         [categorical_cross_entropy(onehot_convert=False),
          soft_dice(logits_axis=1, label_axis=1, weight=2),
@@ -107,7 +107,7 @@ test_sizes = [(h, w) for h, w in zip(
 # #############################################################################
 PRETRAIN_WEIGHTS = False
 # Implement cross validations
-cv_num = 10
+cv_num = 50
 kfold = sklearn.model_selection.KFold(
     cv_num, shuffle=True, random_state=SEED)
 
