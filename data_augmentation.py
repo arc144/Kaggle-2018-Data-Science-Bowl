@@ -4,6 +4,7 @@ from scipy import linalg
 import scipy.ndimage as ndi
 from imgaug import augmenters as iaa
 import imgaug as ia
+import utils
 
 
 def transform_matrix_offset_center(matrix, x, y):
@@ -561,11 +562,10 @@ class Augmentation():
 
     def augment_img_and_mask(self, img, mask):
         seq_det = self.seq.to_deterministic()
-        images_aug = seq_det.augment_images(
-            img.astype(np.float32))
+        images_aug = seq_det.augment_images(img.astype(np.uint8))
         mask_aug = seq_det.augment_images(
             mask.astype(np.uint8), hooks=self.hooks_masks)
-        return images_aug, mask_aug
+        return utils.normalize(images_aug), utils.normalize(mask_aug)
 
 
 if __name__ == '__main__':

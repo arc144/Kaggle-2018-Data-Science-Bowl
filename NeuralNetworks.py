@@ -668,7 +668,7 @@ class U_Net(ConvNetwork_ABC):
                 x_tr, y_tr)
             y_tr = utils.trsf_proba_to_binary(y_tr)
 
-        return x_tr, y_tr, None
+        return utils.normalize(x_tr), utils.normalize(y_tr), None
 
     def get_score(self, pred, y, from_paths=False, tgt_size=None, post_processing=False, method=None):
         '''Reimplement this function and return the score'''
@@ -860,6 +860,7 @@ class U_Net(ConvNetwork_ABC):
                     ids = ids[:len(val_dct['x'])]  # len(x_batch)
                     x, y = utils.load_images_masks(
                         dct['x'][ids], dct['y'][ids])
+                    x, y = utils.normalize(x), utils.normalize(y)
                     # w = dct['w'][ids]
 
                     dct['feed_dict'] = {self.x_tf: x,
