@@ -19,20 +19,21 @@ from scipy.ndimage import label
 IMG_WIDTH = 256        # Default image width
 IMG_HEIGHT = 256       # Default image height
 IMG_CHANNELS = 3       # Default number of channels
-NET_TYPE = 'vanilla'  # Network to use
-nn_name = 'unet_vanilla_V1_Saug_bce+dice'
+NET_TYPE = 'Xception_InceptionSE'  # Network to use
+nn_name = 'unet_Xception_InceptionSE_V9_Aggaug_dice+bce_multihead'
 USE_WEIGHTS = False    # For weighted bce
 METHOD = 'resize'   # Either crop or resize
-MULTI_HEAD = False
-POST_PROCESSING = False
-DATASET = 'V1'
+MULTI_HEAD = True
+POST_PROCESSING = True
+DATASET = 'V9'
 
 # %%####################### DIRS #########################
 if DATASET == 'V1':
     TRAIN_DIR = os.path.join(os.getcwd(), 'stage1_train')
 elif DATASET == 'V9':
-    TRAIN_DIR = os.path.join(os.getcwd(), 'External datasets/external_data/train')
-    
+    TRAIN_DIR = os.path.join(
+        os.getcwd(), 'External datasets/external_data/train')
+
 TEST_DIR = os.path.join(os.getcwd(), 'stage2_final_test')
 VAL_DIR = os.path.join(os.getcwd(), 'stage1_test')
 
@@ -65,12 +66,13 @@ ACTIVATION = 'selu'
 PADDING = 'SYMMETRIC'
 AUGMENTATION = True
 
-LOSS = [[categorical_cross_entropy(), soft_dice(logits_axis=1, label_axis=0, weight=2)]]
+# LOSS = [[categorical_cross_entropy(), soft_dice(
+#     logits_axis=1, label_axis=0, weight=2)]]
 
-#LOSS = [[categorical_cross_entropy(), soft_dice(logits_axis=1, label_axis=0)],
-#        [categorical_cross_entropy(onehot_convert=False),
-#         soft_dice(logits_axis=1, label_axis=1, weight=2),
-#         soft_dice(logits_axis=2, label_axis=2, weight=10)]]
+LOSS = [[categorical_cross_entropy(), soft_dice(logits_axis=1, label_axis=0)],
+        [categorical_cross_entropy(onehot_convert=False),
+         soft_dice(logits_axis=1, label_axis=1, weight=2),
+         soft_dice(logits_axis=2, label_axis=2, weight=10)]]
 
 # LOSS = [None,
 #         [categorical_cross_entropy(onehot_convert=False),
@@ -341,7 +343,7 @@ for j in tqdm(range(0, (count + 1) * inference_batch, inference_batch)):
         post_processed=POST_PROCESSING)
     test_pred_rle.extend(rle)
     test_pred_ids.extend(rle_id)
-    
+
     if METHOD is None and (j % 500) == 0 and j:
         # Create submission file, save to disk and release some memory
         i += 1
@@ -360,7 +362,7 @@ sub = pd.DataFrame()
 sub['ImageId'] = test_pred_ids
 sub['EncodedPixels'] = pd.Series(test_pred_rle).apply(
     lambda x: ' '.join(str(y) for y in x))
-sub.to_csv('sub-dsbowl2018-{}.csv'.format(i+1), index=False)
+sub.to_csv('sub-dsbowl2018-{}.csv'.format(i + 1), index=False)
 sub.head()
 
 print('test_pred_ids.shape = {}'.format(np.array(test_pred_ids).shape))

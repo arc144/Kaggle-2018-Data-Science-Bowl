@@ -6,6 +6,7 @@ import utils
 import score
 import unets
 import tempfile
+from data_augmentation import Augmentation
 
 
 class ConvNetwork_ABC():
@@ -439,8 +440,7 @@ class U_Net(ConvNetwork_ABC):
         self.loss = loss
         self.net_type = net_type
         self.multi_head = multi_head
-        self.buffer_x = []
-        self.buffer_y = []
+        self.aug = Augmentation()
 
     def build_graph(self):
         """ Build the complete graph in TensorFlow. """
@@ -664,7 +664,7 @@ class U_Net(ConvNetwork_ABC):
 
         # Use augmented data.
         if self.train_on_augmented_data:
-            x_tr, y_tr = utils.augment_images_masks(
+            x_tr, y_tr = self.aug.augment_img_and_mask(
                 x_tr, y_tr)
             y_tr = utils.trsf_proba_to_binary(y_tr)
 
