@@ -1,2 +1,2 @@
-model_checkpoint_path: "/media/data/Kaggle/Kaggle-2018-Data-Science-Bowl/unet_Xception_InceptionSE_V9_Saug_dice+bce_multihead"
-all_model_checkpoint_paths: "/media/data/Kaggle/Kaggle-2018-Data-Science-Bowl/unet_Xception_InceptionSE_V9_Saug_dice+bce_multihead"
+model_checkpoint_path: "/media/data/Kaggle/Kaggle-2018-Data-Science-Bowl/unet_vanilla_V1_Saug_bce+dice"
+all_model_checkpoint_paths: "/media/data/Kaggle/Kaggle-2018-Data-Science-Bowl/unet_vanilla_V1_Saug_bce+dice"

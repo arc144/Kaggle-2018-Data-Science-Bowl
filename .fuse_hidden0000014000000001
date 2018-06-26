@@ -26,34 +26,25 @@ chunk, rest = divmod(len(x_train), n)
 x = x_train[run * chunk:(run + 1) * chunk]
 y = y_train[run * chunk:(run + 1) * chunk]
 
-# method = 'resize'
-# tgt_size = (256, 256)
+method = 'resize'
+tgt_size = (256, 256)
 
-# x_loaded, y_loaded = utils.generate_images_masks(
-#     x,
-#     y,
-#     method=method, tgt_size=tgt_size)
+x_loaded, y_loaded = utils.generate_images_masks(
+    x,
+    y,
+    method=method, tgt_size=tgt_size)
 
-# for i in tqdm(range(len(x_loaded))):
-#     np.save(x[i] + 'img.npy', x_loaded[i])
-#     np.save(y[i] + 'mask2.npy', y_loaded[i])
+for i in tqdm(range(len(x_loaded))):
+    np.save(x[i] + 'img.npy', x_loaded[i])
+    np.save(y[i] + 'mask2.npy', y_loaded[i])
 
-x_loaded, y_loaded = utils.load_images_masks(x, y)
+# x_loaded, y_loaded = utils.load_images_masks(x, y)
 
-import matplotlib.pyplot as plt
-fig, axs = plt.subplots(1, 4)
-axs[0].imshow(x_loaded[0])
-axs[0].set_title('Original Image')
-axs[1].imshow(1 - y_loaded[0][:, :, 0], cmap='Greys')
-axs[1].set_title('Original Mask')
-axs[2].imshow(1 - y_loaded[0][:, :, 2], cmap='Greys')
-axs[2].set_title('Borderless Mask')
-axs[3].imshow(1 - y_loaded[0][:, :, 3], cmap='Greys')
-axs[3].set_title('Touching Borders')
-
-for ax in axs:
-    ax.set_yticklabels([])
-    ax.set_xticklabels([])
-
-plt.show()
-plt.tight_layout()
+# import matplotlib.pyplot as plt
+# fig, axs = plt.subplots(1, 5)
+# axs[0].imshow(x_loaded[0])
+# axs[1].imshow(y_loaded[0][:, :, 0])
+# axs[2].imshow(y_loaded[0][:, :, 1])
+# axs[3].imshow(y_loaded[0][:, :, 2])
+# axs[4].imshow(y_loaded[0][:, :, 3])
+# plt.show()

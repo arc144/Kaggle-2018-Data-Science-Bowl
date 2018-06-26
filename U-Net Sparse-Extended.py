@@ -19,18 +19,23 @@ from scipy.ndimage import label
 IMG_WIDTH = 256        # Default image width
 IMG_HEIGHT = 256       # Default image height
 IMG_CHANNELS = 3       # Default number of channels
-NET_TYPE = 'Xception_InceptionSE'  # Network to use
-nn_name = 'unet_Xception_InceptionSE_V9_Saug_dice+bce_multihead'
+NET_TYPE = 'vanilla'  # Network to use
+nn_name = 'unet_vanilla_V1_Saug_bce+dice'
 USE_WEIGHTS = False    # For weighted bce
 METHOD = 'resize'   # Either crop or resize
-MULTI_HEAD = True
-POST_PROCESSING = True
+MULTI_HEAD = False
+POST_PROCESSING = False
+DATASET = 'V1'
 
 # %%####################### DIRS #########################
-#TRAIN_DIR = os.path.join(os.getcwd(), 'stage1_train')
+if DATASET == 'V1':
+    TRAIN_DIR = os.path.join(os.getcwd(), 'stage1_train')
+elif DATASET == 'V9':
+    TRAIN_DIR = os.path.join(os.getcwd(), 'External datasets/external_data/train')
+    
 TEST_DIR = os.path.join(os.getcwd(), 'stage2_final_test')
 VAL_DIR = os.path.join(os.getcwd(), 'stage1_test')
-TRAIN_DIR = os.path.join(os.getcwd(), 'External datasets/external_data/train')
+
 # TEST_DIR = os.path.join(os.getcwd(), 'External datasets/external_data/test')
 IMG_TYPE = '.png'         # Image type
 DIR_DICT = dict(logs='logs', saves='saves')
@@ -50,6 +55,7 @@ y_test_pred = {}
 ########################### HYPERPARAMETERS ###################################
 ###############################################################################
 LEARN_RATE_0 = 1e-3
+LEARN_RATE_FINETUNE = 1e-4
 LEARN_RATE_ALPHA = 0.25
 LEARN_RATE_STEP = 3
 N_EPOCH = 30
@@ -58,12 +64,15 @@ KEEP_PROB = 0.8
 ACTIVATION = 'selu'
 PADDING = 'SYMMETRIC'
 AUGMENTATION = True
-LOSS = [[categorical_cross_entropy(), soft_dice(logits_axis=1, label_axis=0)],
-        [categorical_cross_entropy(onehot_convert=False),
-         soft_dice(logits_axis=1, label_axis=1, weight=2),
-         soft_dice(logits_axis=2, label_axis=2, weight=10)]]
 
-#LOSS = [None,
+LOSS = [[categorical_cross_entropy(), soft_dice(logits_axis=1, label_axis=0, weight=2)]]
+
+#LOSS = [[categorical_cross_entropy(), soft_dice(logits_axis=1, label_axis=0)],
+#        [categorical_cross_entropy(onehot_convert=False),
+#         soft_dice(logits_axis=1, label_axis=1, weight=2),
+#         soft_dice(logits_axis=2, label_axis=2, weight=10)]]
+
+# LOSS = [None,
 #         [categorical_cross_entropy(onehot_convert=False),
 #          soft_dice(logits_axis=1, label_axis=1),
 #          soft_dice(logits_axis=2, label_axis=2, weight=2)]]
@@ -107,7 +116,11 @@ test_sizes = [(h, w) for h, w in zip(
 # #############################################################################
 PRETRAIN_WEIGHTS = False
 # Implement cross validations
-cv_num = 50
+if DATASET == 'V1':
+    cv_num = 10
+elif DATASET == 'V9':
+    cv_num = 50
+
 kfold = sklearn.model_selection.KFold(
     cv_num, shuffle=True, random_state=SEED)
 
@@ -174,7 +187,7 @@ for i, (train_index, valid_index) in enumerate(kfold.split(x_train)):
                                   x_valid=x_vld, y_valid=y_vld,
                                   n_epoch=N_EPOCH,
                                   train_on_augmented_data=AUGMENTATION,
-                                   lr = 1e-4,
+                                  lr=LEARN_RATE_FINETUNE,
                                   train_profille='all',
                                   method='resize',
                                   )
@@ -267,15 +280,13 @@ u_net = U_Net(dir_dict=DIR_DICT)
 sess = u_net.load_session_from_file(nn_name)
 n = 47
 
-pred = u_net.get_prediction(
+pred = u_net.get_prediction_from_path(
     sess, [x_test[n]],
-    from_paths=True,
     method=METHOD,
     tgt_size=(IMG_HEIGHT, IMG_WIDTH),
-    check_compatibility=True,
     compatibility_multiplier=32,
     full_prediction=True)
-pred = utils.trsf_proba_to_binary(pred)
+pred = utils.trsf_proba_to_binary(np.array(pred))
 markers = label(pred[0, :, :, 1] * (1 - pred[0, :, :, 2]))[0]
 pred_water = utils.postprocessing(pred, method='watershed')
 fig, axs = plt.subplots(1, 5, sharex=False)
@@ -304,27 +315,25 @@ test_pred_rle = []
 test_pred_ids = []
 
 sess = u_net.load_session_from_file(nn_name)
-
+i = 0
 for j in tqdm(range(0, (count + 1) * inference_batch, inference_batch)):
     ids = test_ids[j:j + inference_batch]
     data = x_test[j:j + inference_batch]
     sizes = test_sizes[j:j + inference_batch]
-    y_test_pred = u_net.get_prediction(
+    y_test_pred = u_net.get_prediction_from_path(
         sess, data,
-        from_paths=True,
         method=METHOD,
         tgt_size=(IMG_HEIGHT, IMG_WIDTH),
-        check_compatibility=True,
         compatibility_multiplier=32,
         full_prediction=True)
 
     y_test_pred = utils.trsf_proba_to_binary(y_test_pred)
-    y_test_pred = utils.resize_as_original(y_test_pred, sizes)
+
+    if METHOD == 'resize':
+        y_test_pred = utils.resize_as_original(y_test_pred, sizes)
 
     if POST_PROCESSING:
         y_test_pred = utils.postprocessing(y_test_pred, method='watershed')
-    else:
-        y_test_pred[:, :, :, 0]
 
     rle, rle_id = utils.mask_to_rle_wrapper(
         y_test_pred, ids,
@@ -332,23 +341,26 @@ for j in tqdm(range(0, (count + 1) * inference_batch, inference_batch)):
         post_processed=POST_PROCESSING)
     test_pred_rle.extend(rle)
     test_pred_ids.extend(rle_id)
-#    if METHOD is None and j == 1500:
-#        # Create submission file, save to disk and release some memory
-#        sub = pd.DataFrame()
-#        sub['ImageId'] = test_pred_ids
-#        sub['EncodedPixels'] = pd.Series(test_pred_rle).apply(
-#            lambda x: ' '.join(str(y) for y in x))
-    #        sub.to_csv('sub-dsbowl2018-1.csv', index=False)
-#        sub.head()
-#        test_pred_rle = []
-#        test_pred_ids = []
+    
+    if METHOD is None and (j % 500) == 0 and j:
+        # Create submission file, save to disk and release some memory
+        i += 1
+        sub = pd.DataFrame()
+        sub['ImageId'] = test_pred_ids
+        sub['EncodedPixels'] = pd.Series(test_pred_rle).apply(
+            lambda x: ' '.join(str(y) for y in x))
+        sub.to_csv('sub-dsbowl2018-{}.csv'.format(i), index=False)
+        print('sub-dsbowl2018-{}.csv saved'.format(i))
+        test_pred_rle = []
+        test_pred_ids = []
+        sub = []
 
 # Create submission file
 sub = pd.DataFrame()
 sub['ImageId'] = test_pred_ids
 sub['EncodedPixels'] = pd.Series(test_pred_rle).apply(
     lambda x: ' '.join(str(y) for y in x))
-sub.to_csv('sub-dsbowl2018-2.csv', index=False)
+sub.to_csv('sub-dsbowl2018-{}.csv'.format(i+1), index=False)
 sub.head()
 
 print('test_pred_ids.shape = {}'.format(np.array(test_pred_ids).shape))
@@ -357,12 +369,10 @@ print('test_pred_rle.shape = {}'.format(np.array(test_pred_rle).shape))
 # Inspect a test prediction and check run length encoding.
 # n = np.random.randint(len(x_test))
 n = 171
-pred = u_net.get_prediction(
+pred = u_net.get_prediction_from_path(
     sess, [x_test[n]],
-    from_paths=True,
     method=METHOD,
     tgt_size=(IMG_HEIGHT, IMG_WIDTH),
-    check_compatibility=True,
     compatibility_multiplier=32,
     full_prediction=True)[0]
 y_test_pred = utils.trsf_proba_to_binary(pred)

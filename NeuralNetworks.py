@@ -692,35 +692,13 @@ class U_Net(ConvNetwork_ABC):
         return 2 * intersection / union
 
     def get_prediction(self, sess, x_data,
-                       from_paths=False,
-                       check_compatibility=False,
-                       compatibility_multiplier=32,
                        tgt_size=None, method=None,
                        full_prediction=False,
                        keep_prob=1.0):
-        """ Prediction of the neural network graph. """
-        # Load images if needed
-        if from_paths:
-            x_data = utils.load_images(
-                x_data, tgt_size=tgt_size, method=method,
-                check_compatibility=check_compatibility,
-                compatibility_multiplier=compatibility_multiplier)
 
-        # Do it one by one if different sizes
-        if from_paths and method is None:
-            pred = []
-            for x in x_data:
-                pred.append(
-                    sess.run(tf.nn.softmax(self.full_mask_logits_tf),
-                             feed_dict={self.x_tf: np.expand_dims(x, axis=0),
-                                        self.keep_prob_tf: keep_prob}))
-                # if pred[-1].shape[-1] == 2:
-                #     pred[-1] = pred[-1][:, :, :, 1]
-        # Do it for all the batch
-        else:
-            pred = sess.run(tf.nn.softmax(self.full_mask_logits_tf),
-                            feed_dict={self.x_tf: x_data,
-                                       self.keep_prob_tf: keep_prob})
+        pred = sess.run(tf.nn.softmax(self.full_mask_logits_tf),
+                        feed_dict={self.x_tf: x_data,
+                                   self.keep_prob_tf: keep_prob})
 
         if self.multi_head and full_prediction:
             borders = sess.run(tf.nn.softmax(self.borders_logits_tf),
@@ -730,7 +708,60 @@ class U_Net(ConvNetwork_ABC):
                 [pred[:, :, :, 1:], borders[:, :, :, 1:]], -1)
 
         else:
-            pred = pred[:, :, :, 1]
+            pred = pred[:, :, :, 1:]
+
+        return pred
+
+    def get_prediction_from_path(self, sess, x_data,
+                                 compatibility_multiplier=32,
+                                 tgt_size=None, method=None,
+                                 full_prediction=False,
+                                 keep_prob=1.0):
+        """ Prediction of the neural network graph. """
+        # Load images
+        x_data = utils.load_images(
+            x_data, tgt_size=tgt_size, method=method)
+
+        # Do it one by one if different sizes
+        if method is None:
+            pred = []
+            for x in x_data:
+                # Pad if required
+                x, pads = utils.match_size_with_pad(
+                    x, compatibility_multiplier)
+                x = np.expand_dims(x, axis=0)
+                # Run for full mask
+                p = sess.run(tf.nn.softmax(self.full_mask_logits_tf),
+                             feed_dict={self.x_tf: x,
+                                        self.keep_prob_tf: keep_prob})
+                if self.multi_head and full_prediction:
+                    # Run for borders and untouching mask
+                    b = sess.run(tf.nn.softmax(self.borders_logits_tf),
+                                 feed_dict={self.x_tf: x,
+                                            self.keep_prob_tf: keep_prob})
+
+                    p = np.concatenate([p[0, :, :, 1:], b[0, :, :, 1:]], -1)
+                else:
+                    p = p[0, :, :, 1]
+                # Unpad
+                pred.append(utils.unpad_image_to_original_size(
+                    p, pads))
+
+        # Do it for all the batch
+        else:
+            pred = sess.run(tf.nn.softmax(self.full_mask_logits_tf),
+                            feed_dict={self.x_tf: x_data,
+                                       self.keep_prob_tf: keep_prob})
+
+            if self.multi_head and full_prediction:
+                borders = sess.run(tf.nn.softmax(self.borders_logits_tf),
+                                   feed_dict={self.x_tf: x_data,
+                                              self.keep_prob_tf: keep_prob})
+                pred = np.concatenate(
+                    [pred[:, :, :, 1:], borders[:, :, :, 1:]], -1)
+
+            else:
+                pred = pred[:, :, :, 1:]
 
         return pred
 
@@ -848,6 +879,7 @@ class U_Net(ConvNetwork_ABC):
                         dct['mask2_iou'] = np.mean(
                             self.get_IoU(pred[:, :, :, 1], y[:, :, :, 2]))
                     else:
+                        dct['mask2_iou'] = 0
                         dct['border_iou'] = 0
 
                 print(('{:.2f} epoch: train/valid loss = {:.4f}/{:.4f} ' +

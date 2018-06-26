@@ -18,6 +18,8 @@ from data_augmentation import random_transform
 
 def read_image(filepath, color_mode=cv2.IMREAD_COLOR,
                target_size=None, method='resize',
+               check_compatibility=False,
+               compatibility_multiplier=32,
                seed=None):
     """Read an image from a file and resize it."""
     img = cv2.imread(filepath, color_mode)
@@ -30,6 +32,18 @@ def read_image(filepath, color_mode=cv2.IMREAD_COLOR,
             img, seed = random_crop(
                 img, crop_size=target_size, seed=seed, return_seed=True)
             return img, seed
+    else:
+        # Check if original sized image is compatible with network
+        if check_compatibility:
+            height, width = img.shape[0], img.shape[1]
+            hquo, hrest = divmod(height, compatibility_multiplier)
+            wquo, wrest = divmod(width, compatibility_multiplier)
+            if hrest or wrest:
+                # Reshape to closest compatible value
+                img = cv2.resize(img,
+                                 (hquo * compatibility_multiplier,
+                                  wquo * compatibility_multiplier),
+                                 interpolation=cv2.INTER_AREA)
     return img
 
 
@@ -217,7 +231,9 @@ def load_images_masks(x_paths, y_paths):
 
 
 def load_images(paths, tgt_size=None, color_mode=cv2.IMREAD_COLOR,
-                method='resize'):
+                method='resize',
+                check_compatibility=False,
+                compatibility_multiplier=32):
     '''Wrapper for loading images'''
     ret = []
     for path in paths:
@@ -232,7 +248,9 @@ def load_images(paths, tgt_size=None, color_mode=cv2.IMREAD_COLOR,
                 path,
                 color_mode=color_mode,
                 target_size=None,
-                method=method))
+                method=method,
+                check_compatibility=check_compatibility,
+                compatibility_multiplier=compatibility_multiplier))
 
     ret = np.array(ret)
 
@@ -289,7 +307,9 @@ def generate_images_masks(x_paths, y_paths, color_mode=cv2.IMREAD_COLOR,
 
 
 def generate_images(paths, color_mode=cv2.IMREAD_COLOR,
-                    tgt_size=None, method='resize', seed=None):
+                    tgt_size=None, method='resize',
+                    check_compatibility=False,
+                    compatibility_multiplier=32, seed=None):
     '''Wrapper for read_image multiple times'''
     ret = []
     seeds = []
@@ -322,6 +342,8 @@ def generate_images(paths, color_mode=cv2.IMREAD_COLOR,
                 color_mode=color_mode,
                 target_size=None,
                 method=method,
+                check_compatibility=check_compatibility,
+                compatibility_multiplier=compatibility_multiplier,
                 seed=seed))
 
     ret = np.array(ret)
@@ -651,31 +673,6 @@ def augment_images_masks(imgs, masks):
     return np.array(ret_imgs), np.array(trsf_proba_to_binary(ret_masks))
 
 
-def match_size_with_pad(img, multiplier):
-    '''Pad image with 0 if size is not multiple of multiplier
-    Input: single ndarray image of shape HxWxC'''
-    H, W = img.shape[0], img.shape[1]
-    H_pad = H % multiplier
-    W_pad = W % multiplier
-    if H_pad or W_pad:
-        hp = multiplier - H_pad
-        wp = multiplier - W_pad
-        img = np.pad(img, [[0, hp], [0, wp], [0, 0]], 'symmetric')
-    else:
-        hp, wp = 0, 0
-
-    return img, (hp, wp)
-
-
-def unpad_image_to_original_size(img, pad_size):
-    '''Pad image with 0 if size is not multiple of multiplier
-    Input: single ndarray image of shape HxWxC and tuple of ints'''
-    if any(pad_size):
-        return img[:-pad_size[0], :-pad_size[1], :]
-    else:
-        return img
-
-
 def resize_as_original(y_test_pred, test_sizes):
     # Resize predicted masks to original image size.
     y_test_pred_original_size = []
@@ -776,13 +773,3 @@ def mask_to_rle_wrapper(y_test_pred_original_size, test_ids,
         test_pred_rle.extend(rle)
         test_pred_ids.extend([id_] * len(rle))
     return test_pred_rle, test_pred_ids
-
-
-if __name__ == '__main__':
-    x = np.random.randint(0, 100, size=[3, 3, 2])
-    xp, pads = match_size_with_pad(x, 4)
-    print(xp.shape, pads)
-    print(xp)
-    xup = unpad_image_to_original_size(xp, pads)
-    print(xup.shape)
-    print(xup)
