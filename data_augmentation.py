@@ -562,7 +562,8 @@ class Augmentation():
     def augment_img_and_mask(self, img, mask):
         seq_det = self.seq.to_deterministic()
         images_aug = seq_det.augment_images(img)
-        mask_aug = seq_det.augment_images(mask, hooks=self.hooks_masks)
+        mask_aug = seq_det.augment_images(
+            mask.astype(np.uint8), hooks=self.hooks_masks)
         return images_aug, mask_aug
 
 
