@@ -213,7 +213,7 @@ def load_images_masks(x_paths, y_paths):
         imgs.append(np.load(im_path + 'img.npy'))
         masks.append(np.load(mask_path + 'mask2.npy'))
 
-    return np.array(imgs), np.array(masks)
+    return normalize(np.array(imgs)), normalize(np.array(masks))
 
 
 def load_images(paths, tgt_size=None, color_mode=cv2.IMREAD_COLOR,
